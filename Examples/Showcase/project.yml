@@ -3,11 +3,16 @@ options:
   bundleIdPrefix: dev.hotreload
   deploymentTarget:
     iOS: "27.0"
+packages:
+  TaskUI:
+    path: Packages/TaskUI
 targets:
   Showcase:
     type: application
     platform: iOS
     sources: [Showcase]
+    dependencies:
+      - package: TaskUI
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

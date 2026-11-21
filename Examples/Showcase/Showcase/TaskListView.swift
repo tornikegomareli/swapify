@@ -1,4 +1,5 @@
 import SwiftUI
+import TaskUI
 
 struct TaskListView: View {
     let model: TaskModel
@@ -13,6 +14,7 @@ struct TaskListView: View {
                 }
             }
             .navigationTitle("Today")
+            .toolbar { CountBadge(remaining: model.items.filter { !$0.done }.count) }
         }
     }
 }

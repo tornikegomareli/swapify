@@ -13,7 +13,8 @@ example = os.path.join(root, "Examples", "Showcase")
 hotreload = os.path.join(root, ".build", "debug", "hotreload")
 list_view = os.path.join(example, "Showcase", "TaskListView.swift")
 model = os.path.join(example, "Showcase", "TaskModel.swift")
-originals = {path: open(path).read() for path in (list_view, model)}
+badge = os.path.join(example, "Packages", "TaskUI", "Sources", "TaskUI", "CountBadge.swift")
+originals = {path: open(path).read() for path in (list_view, model, badge)}
 failures = []
 
 
@@ -71,15 +72,20 @@ try:
     check("model behavior change runs", result["ok"] and tap["ok"] and buttons[-1] == "Write the agent",
           {"reload": result, "buttons": buttons})
 
-    edit(list_view, '            .navigationTitle("Inbox")\n        }\n    }\n}\n',
+    edit(list_view, '            .navigationTitle("Inbox")\n',
          '            .navigationTitle("Inbox")\n'
-         '            .safeAreaInset(edge: .bottom) { Badge(text: leftText()) }\n'
-         '        }\n    }\n\n'
-         '    private func leftText() -> String { "\\(model.items.filter { !$0.done }.count) left" }\n'
-         '}\n\nprivate struct Badge: View {\n    let text: String\n'
-         '    var body: some View { Text(text).padding().background(.yellow, in: Capsule()) }\n}\n')
+         '            .safeAreaInset(edge: .bottom) { Badge(text: leftText()) }\n')
+    edit(list_view, "    let model: TaskModel\n",
+         "    let model: TaskModel\n\n"
+         "    private func leftText() -> String { \"\\(model.items.filter { !$0.done }.count) left\" }\n")
+    open(list_view, "a").write("\nprivate struct Badge: View {\n    let text: String\n"
+                               "    var body: some View { Text(text).padding().background(.yellow, in: Capsule()) }\n}\n")
     result = cli("reload", list_view)
     check("new function and new view type", result["ok"] and "2 left" in result.get("visibleText", []), result)
+
+    edit(badge, 'Text("\\(remaining) open")', 'Text("\\(remaining) to do")')
+    result = cli("reload", badge)
+    check("edit in a Swift package", result["ok"] and "2 to do" in result.get("visibleText", []), result)
 finally:
     for path, text in originals.items():
         open(path, "w").write(text)
