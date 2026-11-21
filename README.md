@@ -7,7 +7,7 @@
 <h3 align="center">Agentic hot reload for iOS apps.</h3>
 
 <p align="center">
-  <img src=".github/assets/film.png" width="100%" alt="A Claude Code session on the left, the diff of its last edit in the middle, and the Habits app in the iOS Simulator on the right with a green 'live · 701 ms' badge" />
+  <img src=".github/assets/film.png" width="100%" alt="Claude Code in a terminal on the left, its last edit ending with the line 'swapify: TodayView.swift live in 908 ms'; on the right the Habits app on an iPhone, redesigned into cards, next to a label reading Live in 908 ms, state kept" />
 </p>
 
 swapify patches Swift edits into an iOS app that is already running in the simulator. Only the edited file is recompiled. The app keeps its screen, its navigation stack, `@State`, and its data. The agent gets a screenshot and the visible text back, so it can check what it did before it does the next thing.
@@ -16,16 +16,22 @@ A one-line edit to a view in a 979-file TCA app: 10.2 s to rebuild and relaunch,
 
 ## Let the agent see what it did
 
-`swapify init` installs a Claude Code hook. After every `Edit` or `Write` of a Swift file, the hook reloads it and puts the result next to the tool call:
+`swapify init` installs a Claude Code hook. After every `Edit` or `Write` of a Swift file, the hook reloads it. You see one line under the edit:
 
 ```text
-⎿ swapify: TodayView.swift is live in the running app (generation 3, 723 ms).
-  Screenshot: .swapify/screens/reload-3.png. Visible text: Today | 0 | of 4 done | Run | 12 | …
+⎿ PostToolUse:Edit says: swapify: TodayView.swift live in 698 ms
+```
+
+The agent reads the whole result, with a screenshot it can open:
+
+```text
+swapify: TodayView.swift is live in the running app (generation 2, 894 ms).
+Screenshot: .swapify/screens/reload-2.png. Visible text: Today | 0 of 4 done | Run | 12 days | …
 ```
 
 If the file does not compile, the agent gets the compiler errors and the app keeps running the last code that compiled. If the edit changes the memory layout of a type, the agent is told to rebuild, and nothing is patched.
 
-The image above is from a real session: a plain list redesigned into cards, a progress ring, and tap-to-complete, in 6 edits and 85 seconds. The [landing page](https://github.com/tornikegomareli/swapify-site) plays all of it.
+The image above is a frame of the landing page film, cut from one take of a real screen: Claude Code redesigns a plain list into a progress ring, cards, and tap-to-complete in 6 edits and 70 seconds, then taps two habits to check the result. Each edit is live in the app in 681 to 908 ms. The [landing page](https://github.com/tornikegomareli/swapify-site) plays it.
 
 ## Try things, keep what works
 
