@@ -78,7 +78,7 @@ public struct Doctor: Sendable {
 
     private func simulator(_ session: Session) -> Check {
         let simulator = Simulator(deviceSet: session.deviceSet)
-        guard let booted = try? simulator.bootedDevice() else {
+        guard let booted = try? simulator.bootedDevice(preferring: session.udid) else {
             return Check(name: "Simulator", status: .warning, detail: "None booted. `swapify run` boots one.")
         }
         return Check(name: "Simulator", status: .ok, detail: "Booted: \(booted)")

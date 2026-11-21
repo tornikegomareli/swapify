@@ -83,7 +83,7 @@ extension Swapify {
         static let configuration = CommandConfiguration(
             abstract: "Build the app with reload support and launch it in the simulator.")
 
-        @Option(help: "Simulator UDID. Default: the booted simulator, or the newest iPhone.")
+        @Option(help: "Simulator UDID. Default: the last run's simulator if it is booted, then a booted one, then the newest iPhone.")
         var udid: String?
 
         @Option(help: "A simctl device set, for simulators outside Simulator.app.")

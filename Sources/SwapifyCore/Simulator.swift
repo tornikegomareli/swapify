@@ -24,8 +24,18 @@ public struct Simulator: Sendable {
         return byRuntime.flatMap { runtime, devices in devices.map { (runtime, $0) } }
     }
 
-    public func bootedDevice() throws -> String? {
-        try devices("booted").first { $0.device["state"] as? String == "Booted" }?.device["udid"] as? String
+    /// A booted simulator: `preferred` if it is booted, otherwise the first by UDID.
+    public func bootedDevice(preferring preferred: String? = nil) throws -> String? {
+        let booted = try devices("booted").compactMap { entry in
+            entry.device["state"] as? String == "Booted" ? entry.device["udid"] as? String : nil
+        }
+        return Self.choose(booted: booted, preferred: preferred)
+    }
+
+    /// `simctl` lists runtimes in no fixed order, so the choice must not depend on it.
+    static func choose(booted: [String], preferred: String?) -> String? {
+        if let preferred, booted.contains(preferred) { return preferred }
+        return booted.sorted().first
     }
 
     /// Boots the newest available iPhone and shows it in Simulator.app.

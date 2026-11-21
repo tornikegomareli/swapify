@@ -100,3 +100,15 @@ import Testing
         #expect(rebuild.headline == "swapify: Model.swift needs a rebuild, the layout of TaskItem changed")
     }
 }
+
+@Suite struct SimulatorChoiceTests {
+    @Test func prefersTheLastRunsSimulatorWhenBooted() {
+        #expect(Simulator.choose(booted: ["B", "A"], preferred: "B") == "B")
+    }
+
+    @Test func otherwiseTakesTheFirstByUDID() {
+        #expect(Simulator.choose(booted: ["B", "A"], preferred: "C") == "A")
+        #expect(Simulator.choose(booted: ["B", "A"], preferred: nil) == "A")
+        #expect(Simulator.choose(booted: [], preferred: "A") == nil)
+    }
+}

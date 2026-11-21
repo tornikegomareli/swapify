@@ -55,14 +55,16 @@ public struct Launcher: Sendable {
     }
 
     /// Installs and launches the built app with the agent, then waits for its
-    /// first screen. Without a device it uses the booted simulator, or boots one.
+    /// first screen. Without a device it uses the simulator of the last launch if it
+    /// is still booted, then any booted simulator, and otherwise boots one.
     public func launch(udid: String? = nil, deviceSet: String? = nil) throws -> LaunchReport {
         var session = workspace.loadSession()
         guard let appPath = session.appPath, let bundleID = session.bundleID else {
             throw SwapifyError("Nothing is built yet. Run `swapify run`.")
         }
         let simulator = Simulator(deviceSet: deviceSet)
-        let device = try udid ?? simulator.bootedDevice() ?? simulator.bootNewestiPhone()
+        let previous = deviceSet == session.deviceSet ? session.udid : nil
+        let device = try udid ?? simulator.bootedDevice(preferring: previous) ?? simulator.bootNewestiPhone()
         let agentDylib = try Resources.agent()
 
         try simulator.install(app: URL(fileURLWithPath: appPath), on: device)
