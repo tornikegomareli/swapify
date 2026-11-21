@@ -1,0 +1,156 @@
+# Architecture
+
+swapify makes an edit to one Swift file live in a running iOS Simulator app. This document describes each step and the Swift ABI structures it touches. Symbol names, offsets, and measurements are from Xcode 27.2, Swift 6.4, and the iOS 27.2 simulator on Apple silicon.
+
+```text
+ host (swapify CLI / MCP server)                         simulator app process
+ ─────────────────────────────────                       ──────────────────────────────────────
+ Edit TaskListView.swift
+   │
+   ├─ swift-frontend -c -primary-file TaskListView.swift   (the build's own command)
+   ├─ clang -dynamiclib -undefined dynamic_lookup
+   │
+   └─ "load /…/patch.dylib" ──── 127.0.0.1:port ────▶  SwapifyAgent
+                                                           ├─ dlopen
+                                                           ├─ layout guard  ($s…Mn)
+                                                           ├─ new → old     ($s…Ma $s…vau $s…Wl $s…Wa
+                                                           │                 $s…Wvd $s…WP)
+                                                           ├─ old → new     ($s…TX chain roots)
+     "refresh" ───────────────────────────────────────▶   ├─ AGGraphInvalidateAllValues per view graph
+     "snapshot" / "ui" ───────────────────────────────▶   └─ drawViewHierarchy, accessibility tree
+```
+
+## 1. Build
+
+`swapify run` builds the app's Debug configuration into `.swapify/DerivedData` and passes four settings on the `xcodebuild` command line. The project is not changed.
+
+| Setting | Why |
+|---|---|
+| `OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -enable-implicit-dynamic` | Makes every Swift function dynamically replaceable (section 4). |
+| `EMIT_FRONTEND_COMMAND_LINES=YES` | Prints each `swift-frontend -frontend -c …` job into the build log. swapify maps every `-primary-file` to its command. |
+| `COMPILATION_CACHE_ENABLE_CACHING=NO` | Cached builds pass `llvmcas://` inputs that a single-file compile cannot read. |
+| `ARCHS=arm64` | One slice: the simulator runs the host architecture. |
+
+With `-enable-implicit-dynamic`, each function gets a prologue. This is the IR for a free function `report(_:)` at `-Onone`:
+
+```llvm
+@"$s3App6reportyySSFTX" = global %swift.dyn_repl_link_entry { ptr @"$s3App6reportyySSF", ptr null }
+
+define swiftcc void @"$s3App6reportyySSF"(i64 %0, ptr %1) {
+entry:
+  %8 = call ptr @swift_getFunctionReplacement(ptr @"$s3App6reportyySSFTX", ptr @"$s3App6reportyySSF")
+  %9 = icmp eq ptr %8, null
+  br i1 %9, label %original_entry, label %forward_to_replaced
+forward_to_replaced:
+  tail call swiftcc void %8(i64 %0, ptr %1)
+  ret void
+original_entry:
+  ; the function body
+```
+
+`swift_getFunctionReplacement(root, self)` returns null when `root->implementationFunction == self`, and the function runs its own body. Otherwise it returns the stored pointer, and the function tail-calls it (`stdlib/public/runtime/FunctionReplacement.cpp`). The chain root `$s…TX` is a `{ implementationFunction, next }` pair in writable `__DATA,__data`. Roots exist for local and `private` symbols too.
+
+The same flag makes the type checker wrap every opaque `body` result in SwiftUI's `DebugReplaceableView` type eraser. A reloaded `body` can therefore return a different view type without breaking callers that cached the opaque type's metadata.
+
+The cost is one runtime call per function call: 7% in a call-heavy micro benchmark at `-Onone`, and no inlining at `-O`. swapify uses Debug builds only.
+
+## 2. Patch build
+
+`swapify reload File.swift` rewrites the build's own frontend command for that file (`FrontendCommand.patch`):
+
+- The edited file stays the only `-primary-file`. Other primary files of the same batch job become plain inputs.
+- `-o`, `-emit-*-path`, `-serialize-diagnostics-path`, `-index-*`, and the supplementary output file map are dropped, and a new `-o` is added.
+- The file keeps its path. The mangled name of a `private` declaration contains a discriminator derived from the file name, so the patch's `private` symbols match the app's.
+
+The object is linked with the clang next to `swift-frontend`, as `-dynamiclib -undefined dynamic_lookup`. References to the rest of the app stay undefined and bind to the running process at `dlopen`. The linker signs the dylib ad hoc, which the simulator accepts. Every attempt gets a new directory, because `dlopen` of a path that is already loaded returns the old image.
+
+Measured on a SwiftUI view file: compile 230 ms, link 210 ms.
+
+## 3. The agent
+
+`SwapifyAgent.dylib` is inserted at launch with `SIMCTL_CHILD_DYLD_INSERT_LIBRARIES`. `simctl` passes `SIMCTL_CHILD_*` variables into the app without the prefix. The agent's constructor:
+
+1. Reads the symbol table of every image in the app bundle directory, local symbols included. Xcode 16 and later builds Debug apps as a stub executable plus `<App>.debug.dylib`, and both are in that directory.
+2. Starts a thread that serves the line protocol ([protocol.md](protocol.md)) on `127.0.0.1:$SWAPIFY_PORT`. The CLI picks a free port per launch. Simulator apps share the host's network stack.
+
+On `load <path>` the agent runs `dlopen`, then sections 4 to 6 in order, before any patch code can run.
+
+## 4. Old callers run new code
+
+For each chain root `$s…TX` in the patch, the agent finds the root with the same name in the app and in every earlier patch, and copies the patch root's `implementationFunction` into it. From then on, every entry into the old function forwards to the new body:
+
+- direct calls and calls through the GOT;
+- class vtable dispatch, because the vtable points at the old function, whose prologue forwards;
+- protocol witness thunks, which call the concrete function;
+- `private` functions, because their roots are in the symbol table.
+
+The new function reads its own root, which still points at itself, so it runs its body. A second patch updates the app's roots and the first patch's roots.
+
+## 5. New code keeps old types
+
+The patch is a compilation of the whole file, so it defines its own copy of every type, static, and conformance in it. Left alone, the new code would allocate instances of a second `TaskModel` class, read a second copy of every `static let`, and show SwiftUI a second `TaskRow` type. SwiftUI would then rebuild that subtree and drop its `@State`, and `as?` casts between old and new instances would fail.
+
+So the patch is pointed back at the app:
+
+| Patch symbol | Action | Effect |
+|---|---|---|
+| `$s…Ma` type metadata accessor | Overwritten with `ldr x16, #8; br x16; .quad <app accessor>` | New code and mangled-name lookups get the app's metadata |
+| `$s…vau` global and static addressor | Same jump | New code uses the app's storage for globals and `static` properties |
+| `$s…Wl`, `$s…Wa` witness table accessors | Same jump | New code gets the app's conformances |
+| `$s…Wvd` field offset | Copied from the app | Field offsets of types whose layout depends on resilient types are set when the metadata initializes. The patch's metadata never initializes. |
+| `$s…WP` protocol witness table | Copied word by word from the app | The table names the app's conformance descriptor. Its function entries are the app's witness thunks, which reach the new code through section 4. |
+
+A witness table has one word for the conformance descriptor and one per protocol requirement. The agent reads `NumRequirements` at offset 16 of the protocol descriptor that the conformance's relative indirectable pointer names.
+
+The jumps are written to a private copy of the code page (`vm_protect` with `VM_PROT_COPY`), then the page is made executable again and the instruction cache is flushed. Simulator processes are ad hoc signed and not hardened, so this is allowed. A device does not allow it.
+
+dyld never unloads an image that contains Swift or Objective-C, so each reload stays mapped: 65 KB for a small view file, 1.5 MB for a large reducer file. The Objective-C runtime logs `Class … is implemented in both`, which is expected.
+
+## 6. The layout guard
+
+New code runs on objects with the old layout, so a patch must not change stored properties or a class vtable. Before section 5, the agent compares every nominal type descriptor `$s…Mn` in the patch with the app's, following `swift/ABI/Metadata.h`:
+
+- Classes (kind 16): `NumImmediateMembers` at offset 32 (vtable entries), metadata bounds, field count, and field offset vector offset.
+- Structs (17) and enums (18): field count and field offset vector offset, or payload and empty case counts.
+- Every field record: name, `let` or `var`, and mangled type name. Symbolic references in a type name point into different images, so they compare by the referenced descriptor's name. A direct reference (`0x01`) and an indirect one (`0x02`) to the same type are equal: the linker chooses one or the other.
+
+If anything differs, the agent patches nothing and replies `needsRebuild` with the type and the reason. The loaded dylib stays inert, because nothing points at its code.
+
+## 7. SwiftUI redraw
+
+Replacing a `body` does not tell SwiftUI to evaluate it again. `SwiftUI.AppPreviewHost.invalidateEverything()`, which Xcode Previews uses, does this inside the graph host's update group:
+
+```text
+GraphHost.incrementPhase()
+AGGraphInvalidateAllValues(GraphHost.graph)
+GraphHost.emptyTransaction(Transaction())
+GraphHost.flushTransactions()
+```
+
+The agent repeats this for every `_UIHostingView` in the app's windows, but skips `incrementPhase()`. A new view phase is what resets `@State`. It also calls `DebugReplaceableView.invalidateEverything()`, which only clears the lazy container cache. All functions are exported from SwiftUI, SwiftUICore, and AttributeGraph. The agent calls them through `dlsym` with Swift's calling convention. Clang's `swiftcall` attribute with a `swift_context` parameter puts `self` in `x20`. A full refresh takes 2 to 30 ms.
+
+If a future iOS renames these functions, `ping` reports `"swiftUIRefresh": false`, reloads still apply, and views redraw on their next state change.
+
+The agent also posts `SwapifyDidReload` with the generation in `userInfo`, and `INJECTION_BUNDLE_NOTIFICATION`, which keeps Inject's `@ObserveInjection` working.
+
+## 8. Verification
+
+After a reload the CLI asks the agent for two things:
+
+- **Snapshot.** The agent renders the foreground windows with `drawViewHierarchyInRect:afterScreenUpdates:YES` at 1x. This applies pending updates first, so no delay is needed after the refresh. It takes about 46 ms and gives a 402 × 874 PNG, about 480 image tokens for a model.
+- **Visible text.** SwiftUI builds its accessibility tree only while accessibility is on, so the agent calls `_AXSApplicationAccessibilitySetEnabled(1)` once, then walks the accessibility containers of every window. Elements are sorted by frame, because tree order can lag behind the screen. `tap` calls `accessibilityActivate` on the element whose label or identifier matches.
+
+## 9. Timings
+
+Warm reload of a SwiftUI view file on an M-series Mac with Xcode 27.2:
+
+| Step | Time |
+|---|---|
+| Compile one file | 230 ms (a 495-line TCA reducer: 9.6 s) |
+| Link | 210 ms |
+| `dlopen` and patch | 3 to 14 ms (the first patch of a process: about 800 ms) |
+| SwiftUI refresh | 2 to 30 ms |
+| Snapshot and visible text | about 60 ms |
+| Total | 506 to 543 ms |
+
+`swapify run` reloads one unchanged file right after launch, so the agent's first real edit does not pay the cold `dlopen` cost.

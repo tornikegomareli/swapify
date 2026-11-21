@@ -1,62 +1,119 @@
-# hotreload
+# swapify
 
-Live Swift reload into a running iOS Simulator app, built for coding agents. The agent edits a Swift file, the change is live in about half a second, and the agent gets a screenshot and the visible text back. App state stays.
+**Agentic hot reload for iOS apps.** Your coding agent edits a Swift file. swapify recompiles that one file, patches it into the app that is running in the iOS Simulator, redraws SwiftUI, and returns a screenshot and the visible text to the agent. It takes about half a second. The app is not rebuilt or relaunched, and its state stays: the current screen, navigation, `@State`, models, and singletons.
 
-Tested with Xcode 27.2 and the iOS 27.2 simulator on Apple silicon.
-
-## Use
-
-```sh
-swift build                                   # builds .build/debug/hotreload
-cd Examples/Showcase && xcodegen generate     # or any Xcode project of your own
-../../.build/debug/hotreload build --project Showcase.xcodeproj --scheme Showcase
-../../.build/debug/hotreload launch           # needs a booted simulator
-# edit Showcase/TaskListView.swift, then:
-../../.build/debug/hotreload reload Showcase/TaskListView.swift
+```text
+$ swapify reload Sources/Tasks/TaskListView.swift
+✓ live TaskListView.swift  generation 3
+  compile 230 ms · link 210 ms · patch 14 ms · refresh 5 ms · total 512 ms
+  screenshot .swapify/screens/reload-3.png
+  visible    Today | 2 of 3 done | Write the agent | Patch chain roots | 1 left
 ```
 
-`reload` prints JSON with the timings, the screenshot path, and the visible text. Other commands are `ui`, `tap <label>`, and `screenshot`. Run `hotreload` without arguments to see them.
+An agent iterates on design and behavior at the speed of an edit, and checks every step itself.
 
-The project needs no changes. `build` passes the required Debug settings to `xcodebuild`. `launch` also reloads one unchanged file, which pays the first-load cost before the first real edit.
+## Install
 
-A warm reload on Showcase measured 506–543 ms: compile 230 ms, link 210 ms, load and refresh 14–26 ms, then the snapshot and visible text.
+```sh
+brew tap tornikegomareli/swapify https://github.com/tornikegomareli/swapify
+brew install --HEAD swapify
+```
 
-## Test
+Or from source: `make install PREFIX=/usr/local`.
 
-`python3 -I scripts/e2e.py [--udid <UDID>]` runs the whole flow on Showcase against a booted simulator. It checks a visual edit, a compile error, a layout change, a model behavior change with a tap, and a new view type. It restores the example files afterwards.
+You need an Apple silicon Mac, Xcode 26 or later, and an iOS 26 or later simulator. swapify is tested with Xcode 27.2 and iOS 27.2.
 
-## Claude Code
+## Quick start
 
-`.claude/settings.json` in this repository runs `hotreload hook` after every Edit or Write. If the edited file is Swift and its project has a session (`.hotreload/` next to it), the hook reloads the file. It returns the result to the model, which is one of: live with a screenshot and visible text, compile errors, or "needs a rebuild".
+```sh
+cd MyApp                 # the directory with your .xcodeproj or .xcworkspace
+swapify init             # writes swapify.json, the Claude Code hook, the skill, and .mcp.json
+swapify run              # Debug build with reload support, boots a simulator, launches the app
+```
 
-`skills/hotreload/SKILL.md` tells the agent how to start a session, check behavior, and when to rebuild.
+Edit a Swift file, then:
+
+```sh
+swapify reload MyApp/Views/HomeView.swift
+```
+
+Your Xcode project does not change. `swapify run` passes the build settings it needs to `xcodebuild` and keeps its own DerivedData in `.swapify/`.
+
+## Agents
+
+**Claude Code.** `swapify init` installs a PostToolUse hook. After every `Edit` or `Write` of a Swift file, the hook reloads it and gives the result to the model: live with a screenshot path and the visible text, compile errors, or "needs a rebuild". It also installs a skill that explains the workflow, and registers the MCP server in `.mcp.json`.
+
+**Codex, Cursor, and other MCP clients.** Run the MCP server over stdio:
+
+```sh
+codex mcp add swapify -- swapify mcp
+claude mcp add swapify -- swapify mcp
+```
+
+| Tool | What it does |
+|---|---|
+| `reload` | Patches edited files into the app; returns a summary, a screenshot, and the visible text |
+| `ui` | Lists visible accessibility elements with traits and frames |
+| `tap` | Activates an element by label or identifier; returns the visible text after the tap |
+| `screenshot` | The app's screen, or the whole simulator screen with `full` |
+| `run` | Builds and launches the app |
+| `status` | Checks Xcode, the project, the build, the simulator, and the app |
+
+The server speaks MCP 2026-07-28 (stateless, per-request `_meta`) and the earlier `initialize`-based versions. See [docs/agents.md](docs/agents.md).
+
+## Commands
+
+| Command | |
+|---|---|
+| `swapify init` | Set up the project: `swapify.json`, `.gitignore`, the Claude Code hook, skill, and MCP server |
+| `swapify run` | Build with reload support and launch in the simulator (`--no-build` relaunches) |
+| `swapify reload <files>` | Patch edited Swift files into the running app |
+| `swapify ui` | List visible accessibility elements |
+| `swapify tap <label>` | Activate an element by accessibility label or identifier |
+| `swapify screenshot` | Save the app's screen (`--full` for the whole simulator) |
+| `swapify doctor` | Check the Mac, Xcode, the project, the build, the simulator, and the app |
+| `swapify mcp` | Serve the tools over MCP on stdio |
+
+`run`, `reload`, `ui`, and `doctor` accept `--json`.
 
 ## How it works
 
-1. **Build.** The app is built with `-enable-implicit-dynamic`. Every Swift function then starts with a check of its dynamic replacement chain root (`$s...TX`). `EMIT_FRONTEND_COMMAND_LINES=YES` puts each file's exact compile command in the build log.
-2. **Agent.** `agent/HotAgent.m` is inserted at launch with `SIMCTL_CHILD_DYLD_INSERT_LIBRARIES`. It listens on `127.0.0.1:8899`.
-3. **Reload.**
-   1. The CLI compiles the edited file unchanged with its original command.
-   2. It links the object into a dylib.
-   3. The agent `dlopen`s the dylib.
-4. **Patch, new to old.** The patch defines its own copy of every type and static in the file. The agent replaces the start of each new metadata accessor and addressor with a jump to the app's original. It also copies the field offsets, so new code uses the app's types, objects, and storage.
-5. **Patch, old to new.** The agent copies each new chain root into the app's root, so old callers run the new bodies.
-6. **Refresh.** The agent invalidates every SwiftUI view graph, as `AppPreviewHost.invalidateEverything()` does. It skips `incrementPhase()`, which would reset `@State`.
-7. **Safety.** Before patching, the agent compares each type's nominal descriptor in the patch with the app's descriptor. If stored properties or a class vtable changed, it patches nothing and reports `needsRebuild`.
+1. **Build.** `swapify run` builds Debug with `-enable-implicit-dynamic`. Every Swift function then starts by reading its dynamic replacement chain root (`$s…TX`). `EMIT_FRONTEND_COMMAND_LINES=YES` records the exact compile command of each file.
+2. **Agent.** A small dylib is inserted into the app at launch with `DYLD_INSERT_LIBRARIES`. It listens on a loopback port.
+3. **Patch.** `swapify reload` compiles the edited file unchanged, with its own command, and links it into a dylib. The agent `dlopen`s it.
+4. **New code, old types.** The patch carries its own copy of every type in the file. The agent points the patch's metadata accessors, addressors, field offsets, and witness tables at the app's originals, so new code uses the existing types, objects, and storage.
+5. **Old callers, new code.** The agent copies each new chain root into the app's root, so every caller of an edited function runs the new body: direct calls, vtable dispatch, and protocol witnesses.
+6. **Redraw.** The agent invalidates every SwiftUI view graph the way Xcode Previews does, without resetting `@State`.
+7. **Guard.** Before patching, the agent compares each type's layout with the app's. If stored properties or a class vtable changed, it patches nothing and asks for a rebuild.
 
-Background and sources: `docs/research/ios-simulator-hot-reload.md`. Experiments: `spikes/`.
+The details, with the Swift ABI structures involved, are in [docs/architecture.md](docs/architecture.md). The research behind it is in [docs/research](docs/research/ios-simulator-hot-reload.md).
+
+## What reloads
+
+| Change | Result |
+|---|---|
+| Function, method, initializer, computed property, or `body` | Live |
+| New functions, new types, `private` helpers | Live |
+| SwiftUI view structure and modifiers | Live, `@State` kept |
+| Code in Swift packages that the app builds | Live |
+| Add, remove, rename, or retype a stored property | Needs a rebuild |
+| Add or remove a method of a non-final class | Needs a rebuild |
+| New or deleted file, resources, `Info.plist`, dependencies | Needs a rebuild |
+| Initial value of a stored property or `static let` | Reloads, but existing values stay |
 
 ## Limits
 
-- **Reload time is that file's compile time.** On a real TCA app, a 495-line reducer file took 9.6 s to compile alone, while a view file took 0.4 s.
-- **The app must be in the foreground.** iOS suspends background apps, so the agent cannot answer. After 10 s the CLI reports this instead of hanging.
-- **SwiftUI refresh only.** In UIKit code, methods get the new bodies, but nothing calls `viewDidLoad` again. The change shows the next time that code runs. This follows from the mechanism and is untested.
-- **Simulator only.** The agent writes jumps into the patch's code pages, which a device does not allow.
-- **Debug builds only.** `-enable-implicit-dynamic` makes calls slower.
-- **Needs a rebuild:**
-  - A stored property is added, removed, renamed, or retyped.
-  - A method is added to a non-final class.
-  - A file is added or deleted.
-  - Resources, `Info.plist`, or dependencies change.
-- **Uses private SwiftUI symbols.** The refresh calls `GraphHost`, `_UIHostingView.viewGraph`, and `AGGraphInvalidateAllValues` by their mangled names. A future iOS version can rename them. If that happens, the refresh fails, but the reload still applies.
-- **Turns on accessibility.** `ui` and `tap` turn on application accessibility in the simulator.
+- **Simulator and Apple silicon only.** The agent rewrites code pages, which a device does not allow.
+- **Debug builds only.** `-enable-implicit-dynamic` adds a check to every call and blocks inlining.
+- **SwiftUI redraw uses private symbols.** The refresh calls exported SwiftUI functions by their mangled names. If a future iOS renames them, reloads still apply, and views redraw on their next state change. `swapify doctor` reports it.
+- **UIKit does not redraw.** Methods get the new bodies, but nothing calls `viewDidLoad` again. Observe the `SwapifyDidReload` notification to rebuild a screen.
+- **A reload takes as long as compiling that file.** A view file takes about 0.3 s. A large file with many macros can take several seconds.
+- **The app must be in the foreground.** iOS suspends background apps.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). `make test` runs the unit tests, and `make e2e` runs the whole pipeline against `Examples/Showcase` in a simulator.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
