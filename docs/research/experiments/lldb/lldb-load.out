@@ -1,0 +1,17 @@
+(lldb) process attach --pid 98733
+Process 98733 stopped
+* thread #1, queue = 'com.apple.main-thread', stop reason = signal SIGSTOP
+       frame #0: 0x00000001918cf308 libsystem_kernel.dylib`__semwait_signal + 8
+libsystem_kernel.dylib`__semwait_signal:
+->  0x1918cf308 <+8>:  b.lo   0x1918cf328               ; <+40>
+    0x1918cf30c <+12>: pacibsp 
+    0x1918cf310 <+16>: stp    x29, x30, [sp, #-0x10]!
+    0x1918cf314 <+20>: mov    x29, sp
+Target 0: (host) stopped.
+Executable binary set to "/private/tmp/claude-501/-Users-tgomareli-Development-hotreloading/f6546c1e-2418-4397-b695-4946d893591b/scratchpad/b-work/lldb-test/host".
+Architecture set to: arm64-apple-macosx-.
+(lldb) process load /private/tmp/claude-501/-Users-tgomareli-Development-hotreloading/f6546c1e-2418-4397-b695-4946d893591b/scratchpad/b-work/lldb-test/patch.dylib
+Loading "/private/tmp/claude-501/-Users-tgomareli-Development-hotreloading/f6546c1e-2418-4397-b695-4946d893591b/scratchpad/b-work/lldb-test/patch.dylib"...ok
+Image 0 loaded.
+(lldb) detach
+Process 98733 detached

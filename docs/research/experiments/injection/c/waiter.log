@@ -1,0 +1,3 @@
+[waiter] pid=14399
+[plugin] constructor ran
+[waiter] plugin_value() visible after 3s = 42
