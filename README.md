@@ -48,6 +48,8 @@ Background and sources: `docs/research/ios-simulator-hot-reload.md`. Experiments
 
 ## Limits
 
+- **Reload time is that file's compile time.** On a real TCA app, a 495-line reducer file took 9.6 s to compile alone, while a view file took 0.4 s.
+- **The app must be in the foreground.** iOS suspends background apps, so the agent cannot answer. After 10 s the CLI reports this instead of hanging.
 - **SwiftUI refresh only.** In UIKit code, methods get the new bodies, but nothing calls `viewDidLoad` again. The change shows the next time that code runs. This follows from the mechanism and is untested.
 - **Simulator only.** The agent writes jumps into the patch's code pages, which a device does not allow.
 - **Debug builds only.** `-enable-implicit-dynamic` makes calls slower.

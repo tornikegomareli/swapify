@@ -24,6 +24,7 @@ A PostToolUse hook reloads every `.swift` file you edit. Its message tells you o
 - **Live.** The message gives the screenshot path and the visible text. Read the screenshot when the change is visual.
 - **Does not compile.** The message lists the errors. The app still runs the previous code, so fix the errors.
 - **Not applied, needs a rebuild.** Run `hotreload build ...` and `hotreload launch` again. App state resets.
+- **The app did not answer.** It crashed, or it is in the background. Run `hotreload launch` again.
 
 Without the hook, run `hotreload reload <File.swift>` yourself. It returns the same result as JSON.
 
