@@ -11,17 +11,21 @@ func launchApp(udid: String?, deviceSet: String?) throws {
     guard let device = state.udid else { throw CommandError(description: "No booted simulator") }
 
     try check(run(state.simctl + ["install", device, appPath]))
+    state.port = try freePort()
     let console = State.directory.appendingPathComponent("console.log").path
-    let agent = State.directory.appendingPathComponent("HotAgent.dylib").path
+    let agentDylib = State.directory.appendingPathComponent("HotAgent.dylib").path
     try check(run(state.simctl + ["launch", "--terminate-running-process",
                                   "--stdout=\(console)", "--stderr=\(console)", device, bundleID],
-                  environment: ["SIMCTL_CHILD_DYLD_INSERT_LIBRARIES": agent]))
+                  environment: ["SIMCTL_CHILD_DYLD_INSERT_LIBRARIES": agentDylib,
+                                "SIMCTL_CHILD_HOTRELOAD_PORT": String(state.port)]))
     state.generation = 0
     try state.save()
 
-    // Wait until the app shows its first screen.
+    // Wait until this app's agent answers and the app shows its first screen.
     let start = Date()
-    while ((try? AgentConnection().send("ui"))?["elements"] as? [Any] ?? []).isEmpty {
+    let agent = AgentConnection()
+    while (try? agent.send("ping"))?["bundleID"] as? String != bundleID
+            || ((try? agent.send("ui"))?["elements"] as? [Any] ?? []).isEmpty {
         guard Date().timeIntervalSince(start) < 15 else {
             throw CommandError(description: "The app shows no UI, or the agent did not answer. See \(console)")
         }

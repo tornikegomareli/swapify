@@ -11,7 +11,7 @@
 // app's original, so new code keeps using the original types and storage.
 //
 // Protocol (one line per command on 127.0.0.1:$HOTRELOAD_PORT, default 8899):
-//   ping                         -> {"ok":true,"generation":N}
+//   ping                         -> {"ok":true,"generation":N,"bundleID":"..."}
 //   load <absolute dylib path>   -> {"ok":true,"generation":N,...}
 //   refresh                      -> re-renders every SwiftUI hosting view
 //   ui                           -> visible accessibility elements as JSON
@@ -44,9 +44,11 @@ typedef struct {
 
 typedef struct {
     SymTable roots;        // $s...TX dynamic replacement chain roots
-    SymTable accessors;    // $s...Ma type metadata accessors, $s...vau addressors
+    SymTable accessors;    // $s...Ma metadata accessors, $s...vau addressors,
+                           // $s...Wl and $s...Wa witness table accessors
     SymTable descriptors;  // $s...Mn nominal type descriptors
     SymTable offsets;      // $s...Wvd field offsets, set during metadata init
+    SymTable witnessTables;  // $s...WP protocol witness tables
 } Image;
 
 static Image targets[512];  // app images first, then loaded patches
@@ -96,6 +98,7 @@ static Image readImage(uint32_t index, uintptr_t **addrs, size_t *addrCount) {
     image.accessors.syms = malloc(sizeof(Sym) * (symtab->nsyms + 1));
     image.descriptors.syms = malloc(sizeof(Sym) * (symtab->nsyms + 1));
     image.offsets.syms = malloc(sizeof(Sym) * (symtab->nsyms + 1));
+    image.witnessTables.syms = malloc(sizeof(Sym) * (symtab->nsyms + 1));
     if (addrs) *addrs = malloc(sizeof(uintptr_t) * (symtab->nsyms + 1));
     if (addrCount) *addrCount = 0;
     for (uint32_t i = 0; i < symtab->nsyms; i++) {
@@ -107,17 +110,21 @@ static Image readImage(uint32_t index, uintptr_t **addrs, size_t *addrCount) {
         if (strncmp(name, "_$s", 3) != 0) continue;
         if (hasSuffix(name, "TX"))
             image.roots.syms[image.roots.count++] = (Sym){name, addr};
-        else if (hasSuffix(name, "Ma") || hasSuffix(name, "vau"))
+        else if (hasSuffix(name, "Ma") || hasSuffix(name, "vau") || hasSuffix(name, "Wl") ||
+                 hasSuffix(name, "Wa"))
             image.accessors.syms[image.accessors.count++] = (Sym){name, addr};
         else if (hasSuffix(name, "Mn"))
             image.descriptors.syms[image.descriptors.count++] = (Sym){name, addr};
         else if (hasSuffix(name, "Wvd"))
             image.offsets.syms[image.offsets.count++] = (Sym){name, addr};
+        else if (hasSuffix(name, "WP"))
+            image.witnessTables.syms[image.witnessTables.count++] = (Sym){name, addr};
     }
     qsort(image.roots.syms, image.roots.count, sizeof(Sym), compareNames);
     qsort(image.accessors.syms, image.accessors.count, sizeof(Sym), compareNames);
     qsort(image.descriptors.syms, image.descriptors.count, sizeof(Sym), compareNames);
     qsort(image.offsets.syms, image.offsets.count, sizeof(Sym), compareNames);
+    qsort(image.witnessTables.syms, image.witnessTables.count, sizeof(Sym), compareNames);
     if (addrs) qsort(*addrs, *addrCount, sizeof(uintptr_t), compareAddrs);
     return image;
 }
@@ -175,6 +182,18 @@ static void writeWord(uintptr_t at, uint64_t value) {
     vm_size_t length = at + sizeof value - page;
     vm_protect(mach_task_self(), page, length, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
     memcpy((void *)at, &value, sizeof value);
+}
+
+// Words in a witness table: the conformance descriptor plus one per protocol
+// requirement (TargetProtocolDescriptor.NumRequirements at offset 16).
+static size_t witnessTableWords(uintptr_t table) {
+    const uint8_t *conformance = *(const uint8_t *const *)table;
+    if (!conformance) return 0;
+    int32_t offset;
+    memcpy(&offset, conformance, sizeof offset);  // relative indirectable pointer
+    const uint8_t *protocol = conformance + (offset & ~1);
+    if (offset & 1) protocol = *(const uint8_t *const *)protocol;
+    return protocol ? 1 + *(const uint32_t *)(protocol + 16) : 0;
 }
 
 static size_t symbolSize(uintptr_t addr, uintptr_t *addrs, size_t count) {
@@ -338,6 +357,25 @@ static void loadPatch(const char *path, char *reply, size_t replySize) {
         }
     }
 
+    // Witness tables: the patch's tables name the patch's conformance
+    // descriptors, which do not match the app's metadata. Copy the app's
+    // tables. Their function entries reach the new code through chain roots.
+    int tables = 0;
+    for (size_t i = 0; i < fresh.witnessTables.count; i++) {
+        Sym *newSym = &fresh.witnessTables.syms[i];
+        for (int t = 0; t < appImageCount; t++) {
+            Sym *old = lookup(&targets[t].witnessTables, newSym->name);
+            if (!old) continue;
+            size_t words = witnessTableWords(old->addr);
+            if (words && words == witnessTableWords(newSym->addr)) {
+                for (size_t w = 0; w < words; w++)
+                    writeWord(newSym->addr + 8 * w, ((const uint64_t *)old->addr)[w]);
+                tables++;
+            }
+            break;
+        }
+    }
+
     // Old -> new: app images and earlier patches forward to this patch.
     int patched = 0, added = 0;
     for (size_t i = 0; i < fresh.roots.count; i++) {
@@ -356,7 +394,8 @@ static void loadPatch(const char *path, char *reply, size_t replySize) {
     free(fresh.accessors.syms);
     free(fresh.descriptors.syms);
     free(fresh.offsets.syms);
-    fresh.accessors = fresh.descriptors = fresh.offsets = (SymTable){0};
+    free(fresh.witnessTables.syms);
+    fresh.accessors = fresh.descriptors = fresh.offsets = fresh.witnessTables = (SymTable){0};
     targets[targetCount++] = fresh;
     generation++;
     double done = nowMs();
@@ -368,8 +407,8 @@ static void loadPatch(const char *path, char *reply, size_t replySize) {
     });
     snprintf(reply, replySize,
              "{\"ok\":true,\"generation\":%d,\"patched\":%d,\"new\":%d,\"shared\":%d,"
-             "\"tooSmall\":%d,\"dlopenMs\":%.2f,\"patchMs\":%.2f}",
-             generation, patched, added, shared, tooSmall, loaded - start, done - loaded);
+             "\"witnessTables\":%d,\"tooSmall\":%d,\"dlopenMs\":%.2f,\"patchMs\":%.2f}",
+             generation, patched, added, shared, tables, tooSmall, loaded - start, done - loaded);
 }
 
 // SwiftUI refresh. It repeats SwiftUI.AppPreviewHost.invalidateEverything()
@@ -570,7 +609,8 @@ static NSString *jsonString(NSDictionary *object) {
 
 static NSString *handle(NSString *line) {
     if ([line isEqualToString:@"ping"])
-        return [NSString stringWithFormat:@"{\"ok\":true,\"generation\":%d}", generation];
+        return jsonString(@{@"ok" : @YES, @"generation" : @(generation),
+                            @"bundleID" : NSBundle.mainBundle.bundleIdentifier ?: @""});
     if ([line hasPrefix:@"load "]) {
         char reply[PATH_MAX + 256];
         loadPatch([line substringFromIndex:5].UTF8String, reply, sizeof reply);

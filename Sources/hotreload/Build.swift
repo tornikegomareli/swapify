@@ -38,6 +38,15 @@ func build(project: String, scheme: String) throws {
         }
     }
 
+    // Commands are printed only for files that compile, so an up-to-date
+    // build with no saved state has nothing to reload with.
+    guard !state.commands.isEmpty else {
+        printJSON(["ok": false, "stage": "build",
+                   "error": "No compile commands were captured, because the build was up to date. "
+                       + "Delete \(derivedData) and run `hotreload build` again."])
+        exit(1)
+    }
+
     let products = URL(fileURLWithPath: derivedData).appendingPathComponent("Build/Products/Debug-iphonesimulator")
     guard let app = try FileManager.default.contentsOfDirectory(atPath: products.path)
         .first(where: { $0.hasSuffix(".app") }) else {
