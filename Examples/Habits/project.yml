@@ -1,0 +1,16 @@
+name: Habits
+options:
+  bundleIdPrefix: dev.swapify
+  deploymentTarget:
+    iOS: "27.0"
+targets:
+  Habits:
+    type: application
+    platform: iOS
+    sources: [Habits]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.swapify.habits
+        SWIFT_VERSION: "6.0"

@@ -4,3 +4,5 @@ build/
 .build/
 .swapify/
 Examples/*/*.xcodeproj/
+Examples/*/.claude/
+Examples/*/.mcp.json
