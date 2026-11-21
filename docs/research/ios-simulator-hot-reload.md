@@ -12,8 +12,8 @@ Experiment sources are in `docs/research/experiments/` (`injection/` from slice 
 
 The spikes below were run in the iOS 27.2 simulator. The sections after this one still describe them as plans, so this list takes precedence.
 
-- **Chain-root patching: verified** (`spikes/01-chain-root`). Fallbacks 1 and 2 were not needed.
-- **Global SwiftUI refresh: solved** (`spikes/02-refresh-identity`).
+- **Chain-root patching: verified** (`docs/research/spikes/01-chain-root`). Fallbacks 1 and 2 were not needed.
+- **Global SwiftUI refresh: solved** (`docs/research/spikes/02-refresh-identity`).
   - The agent repeats `AppPreviewHost.invalidateEverything()` without `GraphHost.incrementPhase()`.
   - `incrementPhase()` is the call that resets `@State`.
   - All symbols used are exported. `DebugReplaceableView.invalidateEverything()` alone only clears the lazy container cache.

@@ -16,7 +16,7 @@ public struct Doctor: Sendable {
     }
 
     public func run() -> [Check] {
-        var checks = [xcode(), agentDylib()]
+        var checks = [mac(), xcode(), agentDylib()]
         guard let workspace else {
             checks.append(Check(name: "Project", status: .failure,
                                 detail: "No swapify.json here or above. Run `swapify init` in the project directory."))
@@ -28,6 +28,15 @@ public struct Doctor: Sendable {
         checks.append(simulator(session))
         checks.append(agent(session))
         return checks
+    }
+
+    private func mac() -> Check {
+        var info = utsname()
+        uname(&info)
+        let machine = withUnsafeBytes(of: &info.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        return machine == "arm64"
+            ? Check(name: "Mac", status: .ok, detail: "Apple silicon")
+            : Check(name: "Mac", status: .failure, detail: "swapify needs an Apple silicon Mac; this one is \(machine).")
     }
 
     private func xcode() -> Check {

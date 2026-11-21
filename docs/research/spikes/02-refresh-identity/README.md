@@ -1,6 +1,6 @@
 # Spike 02: SwiftUI refresh, state and type identity
 
-Builds on spike 01 and uses the shared agent in `../../agent/HotAgent.m`.
+Builds on spike 01. It used `agent/HotAgent.m` as of commit 70be05d; the agent now lives in `Agent/`, so check out that commit to rerun this spike.
 
 | Check | Chain roots only | + `refresh` with `incrementPhase` | + `refresh` without it | + new->old accessor jumps |
 |---|---|---|---|---|
