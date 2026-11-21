@@ -8,6 +8,23 @@ Labels: **[ran]** = executed on this machine. **[src]** = read in the cited sour
 
 Experiment sources are in `docs/research/experiments/` (`injection/` from slice A, `lldb/` from slice B). Binaries, source clones and the `rea` install stayed in the session scratchpad and can disappear on reboot. Paths in Parts A and B that point to the scratchpad refer to those files.
 
+## Outcome (added after the spikes)
+
+The spikes below were run in the iOS 27.2 simulator. The sections after this one still describe them as plans, so this list takes precedence.
+
+- **Chain-root patching: verified** (`spikes/01-chain-root`). Fallbacks 1 and 2 were not needed.
+- **Global SwiftUI refresh: solved** (`spikes/02-refresh-identity`).
+  - The agent repeats `AppPreviewHost.invalidateEverything()` without `GraphHost.incrementPhase()`.
+  - `incrementPhase()` is the call that resets `@State`.
+  - All symbols used are exported. `DebugReplaceableView.invalidateEverything()` alone only clears the lazy container cache.
+- **Type duplication: solved.**
+  - The agent replaces the start of each patch metadata accessor (`Ma`) and addressor (`vau`) with a jump to the app's original.
+  - It copies the field offset globals (`Wvd`).
+  - Child view `@State`, `static` storage, and `as?` casts now survive a reload.
+- **Layout-change detection: added.** The agent compares nominal type descriptors and field records. Direct (`01`) and indirect (`02`) symbolic references to the same type count as equal.
+- **Agent surface: built.** The `hotreload` CLI, the `hotreload hook` PostToolUse hook, `skills/hotreload`, and in-app `ui`, `tap`, and `snapshot`.
+- **Measured on Showcase, a warm reload:** about 0.7 to 1.1 s from edit to the result reaching the model. Compile 285 ms, link about 300 ms, load plus refresh 58 ms, snapshot plus UI text about 150 ms.
+
 ## Answer
 
 Yes, live reload into a running simulator app is possible without Apple's help, and the critical steps are verified on this machine. Xcode 27.2 has no feature that applies code changes to an app started with Run (B Q5, grep of `IDEIntelligenceChat` and `IDEKit`). Previews does hot swap through its private `XOJIT` engine, but only for processes that Previews launches itself (B Q6).

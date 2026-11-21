@@ -16,6 +16,7 @@
 //   refresh                      -> re-renders every SwiftUI hosting view
 //   ui                           -> visible accessibility elements as JSON
 //   tap <label>                  -> activates the element with that label
+//   snapshot <absolute png path> -> renders the app's windows at 1x
 #import <UIKit/UIKit.h>
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -533,6 +534,35 @@ static NSDictionary *tapElement(NSString *label) {
     return @{@"ok" : @(activated), @"element" : describeElement(target)};
 }
 
+// Renders the app's visible windows into a PNG at `scale` (1 = points).
+// afterScreenUpdates:YES first applies pending changes, so no sleep is needed.
+static NSDictionary *snapshot(NSString *path, CGFloat scale) {
+    double start = nowMs();
+    NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes)
+        if ([scene isKindOfClass:UIWindowScene.class] &&
+            scene.activationState == UISceneActivationStateForegroundActive)
+            for (UIWindow *window in ((UIWindowScene *)scene).windows)
+                if (!window.hidden && window.alpha > 0) [windows addObject:window];
+    if (!windows.count) return @{@"ok" : @NO, @"error" : @"no visible window"};
+    [windows sortUsingComparator:^NSComparisonResult(UIWindow *a, UIWindow *b) {
+        return [@(a.windowLevel) compare:@(b.windowLevel)];
+    }];
+    CGRect bounds = windows.firstObject.screen.bounds;
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
+    format.scale = scale;
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithBounds:bounds format:format];
+    NSData *png = [renderer PNGDataWithActions:^(UIGraphicsImageRendererContext *context) {
+        [UIColor.systemBackgroundColor setFill];
+        [context fillRect:bounds];
+        for (UIWindow *window in windows)
+            [window drawViewHierarchyInRect:window.frame afterScreenUpdates:YES];
+    }];
+    if (![png writeToFile:path atomically:YES]) return @{@"ok" : @NO, @"error" : @"cannot write file"};
+    return @{@"ok" : @YES, @"path" : path, @"ms" : @(nowMs() - start),
+             @"size" : @[ @(bounds.size.width * scale), @(bounds.size.height * scale) ]};
+}
+
 static NSString *jsonString(NSDictionary *object) {
     NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:NULL];
     return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
@@ -560,6 +590,9 @@ static NSString *handle(NSString *line) {
         });
     } else if ([line isEqualToString:@"ui"]) {
         dispatch_sync(dispatch_get_main_queue(), ^{ result = describeUI(); });
+    } else if ([line hasPrefix:@"snapshot "]) {
+        NSString *path = [line substringFromIndex:9];
+        dispatch_sync(dispatch_get_main_queue(), ^{ result = snapshot(path, 1); });
     } else if ([line hasPrefix:@"tap "]) {
         NSString *label = [line substringFromIndex:4];
         dispatch_sync(dispatch_get_main_queue(), ^{ result = tapElement(label); });

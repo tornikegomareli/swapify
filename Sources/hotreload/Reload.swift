@@ -1,8 +1,8 @@
 import Foundation
 
 /// Recompiles the edited files, loads them into the running app, refreshes
-/// SwiftUI and takes a screenshot.
-func reload(files: [String]) throws {
+/// SwiftUI, and returns what the screen shows now.
+func reload(files: [String]) throws -> [String: Any] {
     let start = Date()
     var state = State.load()
     let generation = state.generation + 1
@@ -11,35 +11,32 @@ func reload(files: [String]) throws {
     let attempt = "\(generation)-\(UUID().uuidString.prefix(8))"
     let directory = State.directory.appendingPathComponent("patches/\(attempt)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    var timings: [String: Int] = [:]
 
     // Compile each file with its original command, as the only primary file.
     var objects: [String] = []
-    var linkFlags: [String] = []
+    var command: [String] = []
     for file in files {
         let path = URL(fileURLWithPath: file).standardizedFileURL.path
-        guard let command = state.commands[path] else {
-            throw CommandError(description: "No compile command for \(path). Run `hotreload build`.")
+        guard let original = state.commands[path] else {
+            return ["ok": false, "stage": "compile", "file": path,
+                    "error": "No compile command for this file. If it is new, run `hotreload build` and `hotreload launch`."]
         }
+        command = original
         let object = directory.appendingPathComponent(URL(fileURLWithPath: path).lastPathComponent + ".o").path
-        let result = try run(patchCommand(command, primary: path, output: object))
+        let result = try run(patchCommand(original, primary: path, output: object))
         guard result.status == 0 else {
             let errors = result.output.split(separator: "\n").filter { $0.contains("error:") }
-            printJSON(["ok": false, "stage": "compile", "file": path, "errors": errors.map(String.init)])
-            exit(1)
+            return ["ok": false, "stage": "compile", "file": path, "errors": errors.map(String.init)]
         }
         objects.append(object)
-        linkFlags = linkSettings(command)
     }
-    let compileMs = milliseconds(since: start)
+    timings["compile"] = milliseconds(since: start)
 
     let dylib = directory.appendingPathComponent("patch_\(attempt).dylib").path
-    let link = try run(["xcrun", "swiftc", "-emit-library"] + linkFlags + objects
-                       + ["-o", dylib, "-Xlinker", "-undefined", "-Xlinker", "dynamic_lookup"])
-    guard link.status == 0 else {
-        printJSON(["ok": false, "stage": "link", "output": link.output])
-        exit(1)
-    }
-    let linkMs = milliseconds(since: start) - compileMs
+    let link = try run(linkCommand(command, objects: objects, output: dylib))
+    guard link.status == 0 else { return ["ok": false, "stage": "link", "output": link.output] }
+    timings["link"] = milliseconds(since: start) - timings["compile"]!
 
     let agent = AgentConnection()
     let load = try agent.send("load \(dylib)")
@@ -49,20 +46,40 @@ func reload(files: [String]) throws {
             report["needsRebuild"] = true
             report["type"] = try run(["xcrun", "swift-demangle", "--simplified", "--compact", type]).output
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "nominal type descriptor for ", with: "")
+            report["reason"] = load["reason"]
             report["hint"] = "Stored properties or class methods changed. Run `hotreload build` and `hotreload launch`."
         }
-        printJSON(report)
-        exit(1)
+        return report
     }
-    let refresh = try agent.send("refresh")
     state.generation = generation
     try state.save()
+    let refresh = try agent.send("refresh")
+    timings["loadAndRefresh"] = milliseconds(since: start) - timings["compile"]! - timings["link"]!
 
-    Thread.sleep(forTimeInterval: 0.3)  // let the next frame render
-    let image = try screenshot(state, name: "reload-\(generation)")
-    printJSON(["ok": true, "generation": generation, "files": files, "compileMs": compileMs,
-               "linkMs": linkMs, "load": load, "refresh": refresh, "screenshot": image,
-               "totalMs": milliseconds(since: start)])
+    let screenshot = try snapshot(agent, name: "reload-\(generation)")
+    let visible = try visibleText(agent)
+    timings["total"] = milliseconds(since: start)
+    return ["ok": true, "generation": generation, "files": files, "ms": timings,
+            "refreshedViews": refresh["hosts"] ?? 0, "screenshot": screenshot, "visibleText": visible]
+}
+
+/// Asks the agent to render the app into a PNG. Returns its path.
+func snapshot(_ agent: AgentConnection, name: String) throws -> String {
+    let directory = State.directory.appendingPathComponent("screens")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let reply = try agent.send("snapshot " + directory.appendingPathComponent(name + ".png").path)
+    guard reply["ok"] as? Bool == true, let path = reply["path"] as? String else {
+        throw CommandError(description: "Snapshot failed: \(reply)")
+    }
+    return path
+}
+
+/// Accessibility labels on screen, top to bottom, without repeats.
+func visibleText(_ agent: AgentConnection) throws -> [String] {
+    let elements = try agent.send("ui")["elements"] as? [[String: Any]] ?? []
+    var seen = Set<String>()
+    return elements.compactMap { $0["label"] as? String }.filter { !$0.isEmpty && seen.insert($0).inserted }
 }
 
 /// Rewrites a frontend command from the build log so it compiles only
@@ -92,13 +109,17 @@ func patchCommand(_ command: [String], primary: String, output: String) -> [Stri
     return result + ["-o", output]
 }
 
-/// The target and SDK flags from a frontend command, for linking the patch.
-func linkSettings(_ command: [String]) -> [String] {
-    var flags: [String] = []
-    for flag in ["-target", "-sdk"] {
-        if let index = command.firstIndex(of: flag), index + 1 < command.count {
-            flags += [flag, command[index + 1]]
-        }
+/// Links patch objects into a dylib with the clang next to swift-frontend.
+/// App symbols stay undefined and bind to the running app at load time.
+func linkCommand(_ command: [String], objects: [String], output: String) -> [String] {
+    func value(_ flag: String) -> String {
+        guard let index = command.firstIndex(of: flag), index + 1 < command.count else { return "" }
+        return command[index + 1]
     }
-    return flags
+    let toolchain = URL(fileURLWithPath: command[0]).deletingLastPathComponent().deletingLastPathComponent()
+    let sdk = value("-sdk")
+    return [toolchain.appendingPathComponent("bin/clang").path, "-target", value("-target"),
+            "-isysroot", sdk, "-dynamiclib"] + objects
+        + ["-o", output, "-undefined", "dynamic_lookup", "-Wl,-w",
+           "-L\(sdk)/usr/lib/swift", "-L\(toolchain.path)/lib/swift/iphonesimulator"]
 }

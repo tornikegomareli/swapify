@@ -9,6 +9,7 @@ let usage = """
     hotreload screenshot
     hotreload ui                 visible accessibility elements (label, value, traits, frame)
     hotreload tap <label>        activates the element with that accessibility label
+    hotreload hook               Claude Code PostToolUse hook (reads the hook JSON on stdin)
     """
 
 func option(_ name: String, in arguments: [String]) -> String? {
@@ -27,7 +28,11 @@ do {
     case "launch":
         try launchApp(udid: option("--udid", in: arguments), deviceSet: option("--device-set", in: arguments))
     case "reload" where arguments.count > 1:
-        try reload(files: Array(arguments.dropFirst()))
+        let result = try reload(files: Array(arguments.dropFirst()))
+        printJSON(result)
+        exit(result["ok"] as? Bool == true ? 0 : 1)
+    case "hook":
+        try hook()
     case "screenshot":
         let state = State.load()
         printJSON(["ok": true, "screenshot": try screenshot(state, name: "screenshot-\(Int(Date().timeIntervalSince1970))")])
