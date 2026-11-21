@@ -1,6 +1,6 @@
 # hotreload
 
-Live Swift reload into a running iOS Simulator app, built for coding agents. The agent edits a Swift file, the change is live in about one second, and the agent gets a screenshot and the visible text back. App state stays.
+Live Swift reload into a running iOS Simulator app, built for coding agents. The agent edits a Swift file, the change is live in about half a second, and the agent gets a screenshot and the visible text back. App state stays.
 
 Tested with Xcode 27.2 and the iOS 27.2 simulator on Apple silicon.
 
@@ -17,7 +17,13 @@ cd Examples/Showcase && xcodegen generate     # or any Xcode project of your own
 
 `reload` prints JSON with the timings, the screenshot path, and the visible text. Other commands are `ui`, `tap <label>`, and `screenshot`. Run `hotreload` without arguments to see them.
 
-The project needs no changes. `build` passes the required Debug settings to `xcodebuild`.
+The project needs no changes. `build` passes the required Debug settings to `xcodebuild`. `launch` also reloads one unchanged file, which pays the first-load cost before the first real edit.
+
+A warm reload on Showcase measured 506–543 ms: compile 230 ms, link 210 ms, load and refresh 14–26 ms, then the snapshot and visible text.
+
+## Test
+
+`python3 -I scripts/e2e.py [--udid <UDID>]` runs the whole flow on Showcase against a booted simulator. It checks a visual edit, a compile error, a layout change, a model behavior change with a tap, and a new view type. It restores the example files afterwards.
 
 ## Claude Code
 

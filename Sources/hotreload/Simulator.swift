@@ -19,14 +19,25 @@ func launchApp(udid: String?, deviceSet: String?) throws {
     state.generation = 0
     try state.save()
 
+    // Wait until the app shows its first screen.
     let start = Date()
-    while (try? AgentConnection().send("ping")) == nil {
+    while ((try? AgentConnection().send("ui"))?["elements"] as? [Any] ?? []).isEmpty {
         guard Date().timeIntervalSince(start) < 15 else {
-            throw CommandError(description: "Agent did not answer. See \(console)")
+            throw CommandError(description: "The app shows no UI, or the agent did not answer. See \(console)")
         }
-        Thread.sleep(forTimeInterval: 0.1)
+        Thread.sleep(forTimeInterval: 0.2)
     }
-    printJSON(["ok": true, "udid": device, "bundleID": bundleID, "console": console])
+
+    // Warm-up: reload one unchanged file. The first patch in a process pays a
+    // one-time dlopen cost, and this also checks the whole pipeline.
+    var report: [String: Any] = ["ok": true, "udid": device, "bundleID": bundleID, "console": console]
+    if let file = state.commands.keys.sorted().first(where: { FileManager.default.fileExists(atPath: $0) }) {
+        let warmup = try reload(files: [file])
+        report["warmup"] = warmup["ok"] as? Bool == true
+            ? ["ok": true, "file": file, "ms": (warmup["ms"] as? [String: Int])?["total"] ?? 0]
+            : warmup
+    }
+    printJSON(report)
 }
 
 func bootedDevice(_ state: State) throws -> String? {
