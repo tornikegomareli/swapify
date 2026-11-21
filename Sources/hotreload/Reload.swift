@@ -6,7 +6,10 @@ func reload(files: [String]) throws {
     let start = Date()
     var state = State.load()
     let generation = state.generation + 1
-    let directory = State.directory.appendingPathComponent("patches/\(generation)")
+    // dlopen returns the already loaded image for a known path, so every
+    // attempt, failed ones included, needs a new path.
+    let attempt = "\(generation)-\(UUID().uuidString.prefix(8))"
+    let directory = State.directory.appendingPathComponent("patches/\(attempt)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
     // Compile each file with its original command, as the only primary file.
@@ -29,7 +32,7 @@ func reload(files: [String]) throws {
     }
     let compileMs = milliseconds(since: start)
 
-    let dylib = directory.appendingPathComponent("patch_\(generation).dylib").path
+    let dylib = directory.appendingPathComponent("patch_\(attempt).dylib").path
     let link = try run(["xcrun", "swiftc", "-emit-library"] + linkFlags + objects
                        + ["-o", dylib, "-Xlinker", "-undefined", "-Xlinker", "dynamic_lookup"])
     guard link.status == 0 else {
@@ -41,7 +44,14 @@ func reload(files: [String]) throws {
     let agent = AgentConnection()
     let load = try agent.send("load \(dylib)")
     guard load["ok"] as? Bool == true else {
-        printJSON(["ok": false, "stage": "load", "agent": load])
+        var report: [String: Any] = ["ok": false, "stage": "load", "agent": load]
+        if load["needsRebuild"] as? Bool == true, let type = load["type"] as? String {
+            report["needsRebuild"] = true
+            report["type"] = try run(["xcrun", "swift-demangle", "--simplified", "--compact", type]).output
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            report["hint"] = "Stored properties or class methods changed. Run `hotreload build` and `hotreload launch`."
+        }
+        printJSON(report)
         exit(1)
     }
     let refresh = try agent.send("refresh")

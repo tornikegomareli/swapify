@@ -66,7 +66,7 @@ func shellSplit(_ line: Substring) -> [String] {
 }
 
 func printJSON(_ object: [String: Any]) {
-    let data = try! JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+    let data = try! JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
     print(String(decoding: data, as: UTF8.self))
 }
 

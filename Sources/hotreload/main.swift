@@ -7,6 +7,8 @@ let usage = """
     hotreload launch [--udid <UDID>] [--device-set <path>]
     hotreload reload <File.swift>...
     hotreload screenshot
+    hotreload ui                 visible accessibility elements (label, value, traits, frame)
+    hotreload tap <label>        activates the element with that accessibility label
     """
 
 func option(_ name: String, in arguments: [String]) -> String? {
@@ -29,6 +31,12 @@ do {
     case "screenshot":
         let state = State.load()
         printJSON(["ok": true, "screenshot": try screenshot(state, name: "screenshot-\(Int(Date().timeIntervalSince1970))")])
+    case "ui":
+        printJSON(try AgentConnection().send("ui"))
+    case "tap" where arguments.count > 1:
+        let reply = try AgentConnection().send("tap " + arguments.dropFirst().joined(separator: " "))
+        printJSON(reply)
+        exit(reply["ok"] as? Bool == true ? 0 : 1)
     default:
         print(usage)
         exit(arguments.isEmpty ? 0 : 1)

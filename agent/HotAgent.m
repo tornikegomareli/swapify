@@ -14,6 +14,8 @@
 //   ping                         -> {"ok":true,"generation":N}
 //   load <absolute dylib path>   -> {"ok":true,"generation":N,...}
 //   refresh                      -> re-renders every SwiftUI hosting view
+//   ui                           -> visible accessibility elements as JSON
+//   tap <label>                  -> activates the element with that label
 #import <UIKit/UIKit.h>
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -40,8 +42,10 @@ typedef struct {
 } SymTable;  // sorted by name
 
 typedef struct {
-    SymTable roots;      // $s...TX dynamic replacement chain roots
-    SymTable accessors;  // $s...Ma type metadata accessors, $s...vau addressors
+    SymTable roots;        // $s...TX dynamic replacement chain roots
+    SymTable accessors;    // $s...Ma type metadata accessors, $s...vau addressors
+    SymTable descriptors;  // $s...Mn nominal type descriptors
+    SymTable offsets;      // $s...Wvd field offsets, set during metadata init
 } Image;
 
 static Image targets[512];  // app images first, then loaded patches
@@ -89,6 +93,8 @@ static Image readImage(uint32_t index, uintptr_t **addrs, size_t *addrCount) {
 
     image.roots.syms = malloc(sizeof(Sym) * (symtab->nsyms + 1));
     image.accessors.syms = malloc(sizeof(Sym) * (symtab->nsyms + 1));
+    image.descriptors.syms = malloc(sizeof(Sym) * (symtab->nsyms + 1));
+    image.offsets.syms = malloc(sizeof(Sym) * (symtab->nsyms + 1));
     if (addrs) *addrs = malloc(sizeof(uintptr_t) * (symtab->nsyms + 1));
     if (addrCount) *addrCount = 0;
     for (uint32_t i = 0; i < symtab->nsyms; i++) {
@@ -102,9 +108,15 @@ static Image readImage(uint32_t index, uintptr_t **addrs, size_t *addrCount) {
             image.roots.syms[image.roots.count++] = (Sym){name, addr};
         else if (hasSuffix(name, "Ma") || hasSuffix(name, "vau"))
             image.accessors.syms[image.accessors.count++] = (Sym){name, addr};
+        else if (hasSuffix(name, "Mn"))
+            image.descriptors.syms[image.descriptors.count++] = (Sym){name, addr};
+        else if (hasSuffix(name, "Wvd"))
+            image.offsets.syms[image.offsets.count++] = (Sym){name, addr};
     }
     qsort(image.roots.syms, image.roots.count, sizeof(Sym), compareNames);
     qsort(image.accessors.syms, image.accessors.count, sizeof(Sym), compareNames);
+    qsort(image.descriptors.syms, image.descriptors.count, sizeof(Sym), compareNames);
+    qsort(image.offsets.syms, image.offsets.count, sizeof(Sym), compareNames);
     if (addrs) qsort(*addrs, *addrCount, sizeof(uintptr_t), compareAddrs);
     return image;
 }
@@ -155,6 +167,15 @@ static int writeJump(uintptr_t at, uintptr_t to) {
     return 1;
 }
 
+// Writes a 64-bit value, making the page writable first if needed.
+static void writeWord(uintptr_t at, uint64_t value) {
+    if (*(const uint64_t *)at == value) return;
+    vm_address_t page = at & ~(vm_address_t)(vm_page_size - 1);
+    vm_size_t length = at + sizeof value - page;
+    vm_protect(mach_task_self(), page, length, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+    memcpy((void *)at, &value, sizeof value);
+}
+
 static size_t symbolSize(uintptr_t addr, uintptr_t *addrs, size_t count) {
     for (size_t i = 0; i < count; i++)
         if (addrs[i] > addr) return addrs[i] - addr;
@@ -165,6 +186,102 @@ static double nowMs(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
+// Layout check. New code runs on objects with the old layout, so a patch must
+// not change stored properties or a class vtable. Offsets below follow
+// swift/ABI/Metadata.h (TargetClassDescriptor, TargetStructDescriptor,
+// TargetEnumDescriptor, FieldDescriptor).
+static const uint8_t *relative(const void *field) {
+    int32_t offset;
+    memcpy(&offset, field, sizeof offset);
+    return offset ? (const uint8_t *)field + offset : NULL;
+}
+
+static const char *descriptorName(const uint8_t *descriptor) {
+    const uint8_t *name = relative(descriptor + 8);
+    return name ? (const char *)name : "";
+}
+
+// Compares two mangled type names. Symbolic references point into different
+// images, so they are compared by the referenced descriptor's name.
+static int sameMangledName(const uint8_t *a, const uint8_t *b) {
+    while (*a && *b) {
+        int aContext = *a == 0x01 || *a == 0x02, bContext = *b == 0x01 || *b == 0x02;
+        if (aContext && bContext) {
+            // Direct (01) and indirect (02) references to the same type are
+            // equal; the linker picks one or the other.
+            const uint8_t *da = relative(a + 1), *db = relative(b + 1);
+            if (*a == 0x02) da = *(const uint8_t **)da;
+            if (*b == 0x02) db = *(const uint8_t **)db;
+            if (strcmp(descriptorName(da), descriptorName(db)) != 0) return 0;
+            a += 5, b += 5;
+            continue;
+        }
+        if (*a != *b) return 0;
+        if (*a <= 0x17) a += 5, b += 5;       // other 4-byte relative references
+        else if (*a <= 0x1F) a += 9, b += 9;  // pointer-sized absolute references
+        else a++, b++;
+    }
+    return *a == *b;
+}
+
+// Returns NULL if both descriptors describe the same stored layout, otherwise
+// the reason they differ.
+static const char *layoutDifference(const uint8_t *old, const uint8_t *new) {
+    static char reason[160];
+    uint32_t kind = *(const uint32_t *)old & 0x1F;
+    if (kind != (*(const uint32_t *)new & 0x1F)) return "kind";
+    if (kind == 16) {  // class: metadata bounds, vtable members, field count and offset
+        for (int offset = 24; offset < 44; offset += 4)
+            if (*(const uint32_t *)(old + offset) != *(const uint32_t *)(new + offset)) {
+                snprintf(reason, sizeof reason, "class descriptor word at %d: %u -> %u", offset,
+                         *(const uint32_t *)(old + offset), *(const uint32_t *)(new + offset));
+                return reason;
+            }
+    } else if (kind == 17 || kind == 18) {  // struct, enum
+        if (memcmp(old + 20, new + 20, 8) != 0) return "field count or payload layout";
+    } else {
+        return NULL;
+    }
+    const uint8_t *oldFields = relative(old + 16), *newFields = relative(new + 16);
+    if (!oldFields || !newFields) return oldFields == newFields ? NULL : "field descriptor";
+    uint32_t count = *(const uint32_t *)(oldFields + 12);
+    if (count != *(const uint32_t *)(newFields + 12)) return "field count";
+    for (uint32_t i = 0; i < count; i++) {
+        const uint8_t *a = oldFields + 16 + 12 * i, *b = newFields + 16 + 12 * i;
+        const uint8_t *aName = relative(a + 8), *bName = relative(b + 8);
+        const char *name = aName ? (const char *)aName : "?";
+        if (strcmp(name, bName ? (const char *)bName : "") != 0) {
+            snprintf(reason, sizeof reason, "field %u renamed: %s", i, name);
+            return reason;
+        }
+        if (*(const uint32_t *)a != *(const uint32_t *)b) {
+            snprintf(reason, sizeof reason, "field %s: let/var changed", name);
+            return reason;
+        }
+        const uint8_t *aType = relative(a + 4), *bType = relative(b + 4);
+        if ((aType == NULL) != (bType == NULL) || (aType && !sameMangledName(aType, bType))) {
+            snprintf(reason, sizeof reason, "field %s: type changed", name);
+            return reason;
+        }
+    }
+    return NULL;
+}
+
+// Returns the mangled name of the first type whose layout changed, or NULL.
+static const char *changedLayout(Image *fresh, const char **reason) {
+    for (size_t i = 0; i < fresh->descriptors.count; i++) {
+        Sym *newSym = &fresh->descriptors.syms[i];
+        for (int t = 0; t < appImageCount; t++) {
+            Sym *old = lookup(&targets[t].descriptors, newSym->name);
+            if (!old) continue;
+            *reason = layoutDifference((const uint8_t *)old->addr, (const uint8_t *)newSym->addr);
+            if (*reason) return newSym->name + 1;  // drop the leading underscore
+            break;
+        }
+    }
+    return NULL;
 }
 
 static void loadPatch(const char *path, char *reply, size_t replySize) {
@@ -184,6 +301,16 @@ static void loadPatch(const char *path, char *reply, size_t replySize) {
     size_t addrCount;
     Image fresh = readImage((uint32_t)index, &addrs, &addrCount);
 
+    // The dylib stays loaded but inert: nothing points at its code.
+    const char *reason = NULL;
+    const char *changed = changedLayout(&fresh, &reason);
+    if (changed) {
+        snprintf(reply, replySize,
+                 "{\"ok\":false,\"needsRebuild\":true,\"error\":\"stored layout changed\","
+                 "\"type\":\"%s\",\"reason\":\"%s\"}", changed, reason);
+        return;
+    }
+
     // New -> old first, before any new code can run.
     int shared = 0, tooSmall = 0;
     for (size_t i = 0; i < fresh.accessors.count; i++) {
@@ -193,6 +320,19 @@ static void loadPatch(const char *path, char *reply, size_t replySize) {
             if (!old) continue;
             if (symbolSize(newSym->addr, addrs, addrCount) < 16) tooSmall++;
             else if (writeJump(newSym->addr, old->addr)) shared++;
+            break;
+        }
+    }
+
+    // Field offsets of types whose layout depends on other modules are
+    // computed when the metadata is initialized. The patch's metadata never
+    // initializes (its accessors jump to the app's), so copy the app's values.
+    for (size_t i = 0; i < fresh.offsets.count; i++) {
+        Sym *newSym = &fresh.offsets.syms[i];
+        for (int t = 0; t < appImageCount; t++) {
+            Sym *old = lookup(&targets[t].offsets, newSym->name);
+            if (!old) continue;
+            writeWord(newSym->addr, *(const uint64_t *)old->addr);
             break;
         }
     }
@@ -213,7 +353,9 @@ static void loadPatch(const char *path, char *reply, size_t replySize) {
     }
     free(addrs);
     free(fresh.accessors.syms);
-    fresh.accessors = (SymTable){0};
+    free(fresh.descriptors.syms);
+    free(fresh.offsets.syms);
+    fresh.accessors = fresh.descriptors = fresh.offsets = (SymTable){0};
     targets[targetCount++] = fresh;
     generation++;
     double done = nowMs();
@@ -296,31 +438,148 @@ static int refreshSwiftUI(void) {
     return (int)hosts.count;
 }
 
+// UI inspection through the public accessibility API. SwiftUI hosting views
+// expose their elements as accessibility containers.
+static NSArray *accessibilityChildren(id node) {
+    NSArray *children = [node accessibilityElements];
+    if (children.count) return children;
+    NSInteger count = [node accessibilityElementCount];
+    if (count != NSNotFound && count > 0) {
+        NSMutableArray *list = [NSMutableArray array];
+        for (NSInteger i = 0; i < count; i++) {
+            id child = [node accessibilityElementAtIndex:i];
+            if (child) [list addObject:child];
+        }
+        return list;
+    }
+    return [node isKindOfClass:UIView.class] ? ((UIView *)node).subviews : @[];
+}
+
+static void collectElements(id node, NSMutableArray *out, int depth) {
+    if (depth > 80) return;
+    if ([node isKindOfClass:UIView.class] && ((UIView *)node).hidden) return;
+    if ([node isAccessibilityElement]) [out addObject:node];
+    for (id child in accessibilityChildren(node)) collectElements(child, out, depth + 1);
+}
+
+// SwiftUI builds its accessibility tree only when accessibility is on.
+// Returns 1 if this call turned it on.
+static int enableAccessibility(void) {
+    static int enabled;
+    if (enabled) return 0;
+    enabled = 1;
+    void (*setEnabled)(int) = dlsym(RTLD_DEFAULT, "_AXSApplicationAccessibilitySetEnabled");
+    if (!setEnabled) {
+        dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW);
+        setEnabled = dlsym(RTLD_DEFAULT, "_AXSApplicationAccessibilitySetEnabled");
+    }
+    if (setEnabled) setEnabled(1);
+    else LOG("_AXSApplicationAccessibilitySetEnabled not found\n");
+    return 1;
+}
+
+static NSArray *visibleElements(void) {
+    NSMutableArray *elements = [NSMutableArray array];
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes)
+        if ([scene isKindOfClass:UIWindowScene.class])
+            for (UIWindow *window in ((UIWindowScene *)scene).windows)
+                if (!window.hidden) collectElements(window, elements, 0);
+    return elements;
+}
+
+static NSDictionary *describeElement(id element) {
+    UIAccessibilityTraits traits = [element accessibilityTraits];
+    NSMutableArray *names = [NSMutableArray array];
+    if (traits & UIAccessibilityTraitButton) [names addObject:@"button"];
+    if (traits & UIAccessibilityTraitHeader) [names addObject:@"header"];
+    if (traits & UIAccessibilityTraitSelected) [names addObject:@"selected"];
+    if (traits & UIAccessibilityTraitStaticText) [names addObject:@"text"];
+    if (traits & UIAccessibilityTraitImage) [names addObject:@"image"];
+    if (traits & UIAccessibilityTraitNotEnabled) [names addObject:@"disabled"];
+    CGRect frame = [element accessibilityFrame];
+    return @{
+        @"label" : [element accessibilityLabel] ?: @"",
+        @"value" : [element accessibilityValue] ?: @"",
+        @"traits" : names,
+        @"frame" : @[ @(round(frame.origin.x)), @(round(frame.origin.y)),
+                      @(round(frame.size.width)), @(round(frame.size.height)) ],
+    };
+}
+
+static NSDictionary *describeUI(void) {
+    NSMutableArray *list = [NSMutableArray array];
+    for (id element in visibleElements()) [list addObject:describeElement(element)];
+    // Tree order can lag behind the screen, so sort top to bottom, left to right.
+    [list sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        NSArray *fa = a[@"frame"], *fb = b[@"frame"];
+        NSComparisonResult byY = [fa[1] compare:fb[1]];
+        return byY != NSOrderedSame ? byY : [fa[0] compare:fb[0]];
+    }];
+    return @{@"ok" : @YES, @"elements" : list};
+}
+
+// Activates the first element whose label equals `label`, else the first
+// whose label contains it.
+static NSDictionary *tapElement(NSString *label) {
+    NSArray *elements = visibleElements();
+    id target = nil;
+    for (id element in elements)
+        if ([[element accessibilityLabel] isEqualToString:label]) { target = element; break; }
+    if (!target)
+        for (id element in elements)
+            if ([[element accessibilityLabel] containsString:label]) { target = element; break; }
+    if (!target) return @{@"ok" : @NO, @"error" : @"no element with that label"};
+    BOOL activated = [target accessibilityActivate];
+    return @{@"ok" : @(activated), @"element" : describeElement(target)};
+}
+
+static NSString *jsonString(NSDictionary *object) {
+    NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:NULL];
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+}
+
+static NSString *handle(NSString *line) {
+    if ([line isEqualToString:@"ping"])
+        return [NSString stringWithFormat:@"{\"ok\":true,\"generation\":%d}", generation];
+    if ([line hasPrefix:@"load "]) {
+        char reply[PATH_MAX + 256];
+        loadPatch([line substringFromIndex:5].UTF8String, reply, sizeof reply);
+        return @(reply);
+    }
+    __block NSDictionary *result = nil;
+    if ([line isEqualToString:@"ui"] || [line hasPrefix:@"tap "]) {
+        __block int justEnabled = 0;
+        dispatch_sync(dispatch_get_main_queue(), ^{ justEnabled = enableAccessibility(); });
+        if (justEnabled) usleep(500 * 1000);  // let SwiftUI build the tree
+    }
+    if ([line isEqualToString:@"refresh"]) {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            double start = nowMs();
+            int hosts = refreshSwiftUI();
+            result = @{@"ok" : @(hosts >= 0), @"hosts" : @(hosts), @"refreshMs" : @(nowMs() - start)};
+        });
+    } else if ([line isEqualToString:@"ui"]) {
+        dispatch_sync(dispatch_get_main_queue(), ^{ result = describeUI(); });
+    } else if ([line hasPrefix:@"tap "]) {
+        NSString *label = [line substringFromIndex:4];
+        dispatch_sync(dispatch_get_main_queue(), ^{ result = tapElement(label); });
+    } else {
+        result = @{@"ok" : @NO, @"error" : @"unknown command"};
+    }
+    return jsonString(result);
+}
+
 static void serve(int client) {
     FILE *io = fdopen(client, "r+");
-    char line[PATH_MAX + 16], reply[PATH_MAX + 256];
+    char line[PATH_MAX + 16];
     while (fgets(line, sizeof line, io)) {
         line[strcspn(line, "\r\n")] = 0;
-        if (strcmp(line, "ping") == 0) {
-            snprintf(reply, sizeof reply, "{\"ok\":true,\"generation\":%d}", generation);
-        } else if (strncmp(line, "load ", 5) == 0) {
-            loadPatch(line + 5, reply, sizeof reply);
-        } else if (strcmp(line, "refresh") == 0) {
-            __block double ms = 0;
-            __block int hosts = 0;
-            dispatch_sync(dispatch_get_main_queue(), ^{
-                double start = nowMs();
-                hosts = refreshSwiftUI();
-                ms = nowMs() - start;
-            });
-            snprintf(reply, sizeof reply, "{\"ok\":%s,\"hosts\":%d,\"refreshMs\":%.2f}",
-                     hosts >= 0 ? "true" : "false", hosts, ms);
-        } else {
-            snprintf(reply, sizeof reply, "{\"ok\":false,\"error\":\"unknown command\"}");
+        @autoreleasepool {
+            NSString *reply = handle(@(line));
+            LOG("%s -> %.200s\n", line, reply.UTF8String);
+            fprintf(io, "%s\n", reply.UTF8String);
+            fflush(io);
         }
-        LOG("%s -> %s\n", line, reply);
-        fprintf(io, "%s\n", reply);
-        fflush(io);
     }
     fclose(io);
 }
