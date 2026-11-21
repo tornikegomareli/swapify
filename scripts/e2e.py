@@ -1,7 +1,8 @@
-"""End-to-end test of hotreload on Examples/Showcase.
+"""End-to-end test of swapify on Examples/Showcase.
 
-Needs a booted simulator. Usage:
+Usage:
     python3 -I scripts/e2e.py [--udid <UDID>] [--device-set <path>]
+Without a device it uses the booted simulator, or boots the newest iPhone.
 """
 import json
 import os
@@ -10,7 +11,7 @@ import sys
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 example = os.path.join(root, "Examples", "Showcase")
-hotreload = os.path.join(root, ".build", "debug", "hotreload")
+swapify = os.path.join(root, ".build", "debug", "swapify")
 list_view = os.path.join(example, "Showcase", "TaskListView.swift")
 model = os.path.join(example, "Showcase", "TaskModel.swift")
 badge = os.path.join(example, "Packages", "TaskUI", "Sources", "TaskUI", "CountBadge.swift")
@@ -19,8 +20,11 @@ failures = []
 
 
 def cli(*args):
-    result = subprocess.run([hotreload, *args], cwd=example, capture_output=True, text=True)
-    return json.loads(result.stdout)
+    result = subprocess.run([swapify, *args, "--json"], cwd=example, capture_output=True, text=True)
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {"status": "failed", "errors": [result.stdout + result.stderr]}
 
 
 def edit(path, old, new):
@@ -37,39 +41,42 @@ def check(name, condition, detail):
 
 
 def labels():
-    return [e["label"] for e in cli("ui")["elements"]]
+    return [e["label"] for e in cli("ui")]
+
+
+def tap(label):
+    return subprocess.run([swapify, "tap", label], cwd=example, capture_output=True).returncode == 0
 
 
 try:
     subprocess.run(["swift", "build"], cwd=root, check=True, capture_output=True)
     if not os.path.exists(os.path.join(example, "Showcase.xcodeproj")):
         subprocess.run(["xcodegen", "generate"], cwd=example, check=True, capture_output=True)
-    build = cli("build", "--project", "Showcase.xcodeproj", "--scheme", "Showcase")
-    check("build", build["ok"], build)
-    launch = cli("launch", *sys.argv[1:])
-    check("launch and warm-up", launch["ok"] and launch.get("warmup", {}).get("ok"), launch)
+    run = cli("run", *sys.argv[1:])
+    check("build, launch and warm-up", run.get("launch", {}).get("warmup", {}).get("status") == "live", run)
 
     edit(list_view, '.navigationTitle("Today")', '.navigationTitle("Inbox")')
     result = cli("reload", list_view)
-    check("visual edit is live", result["ok"] and "Inbox" in result["visibleText"], result)
-    check("warm reload under 2 s", result["ok"] and result["ms"]["total"] < 2000, result.get("ms"))
+    check("visual edit is live", result["status"] == "live" and "Inbox" in result["visibleText"], result)
+    check("warm reload under 2 s", result["status"] == "live" and result["timings"]["total"] < 2000,
+          result.get("timings"))
 
     edit(list_view, '.navigationTitle("Inbox")', ".navigationTitle(missingName)")
     result = cli("reload", list_view)
-    check("compile error is reported", not result["ok"] and result.get("stage") == "compile", result)
+    check("compile error is reported", result["status"] == "compileError", result)
     edit(list_view, ".navigationTitle(missingName)", '.navigationTitle("Inbox")')
 
     edit(model, "    var done = false\n", "    var done = false\n    var priority = 0\n")
     result = cli("reload", model)
-    check("layout change needs rebuild", result.get("needsRebuild") is True, result)
+    check("layout change needs rebuild", result["status"] == "needsRebuild", result)
     open(model, "w").write(originals[model])
 
     edit(model, "        items[index].done.toggle()\n",
          "        items[index].done.toggle()\n        items.sort { !$0.done && $1.done }\n")
     result = cli("reload", model)
-    tap = cli("tap", "Write the agent")
+    tapped = tap("Write the agent")
     buttons = [label for label in labels() if label in ("Write the agent", "Patch chain roots", "Refresh SwiftUI")]
-    check("model behavior change runs", result["ok"] and tap["ok"] and buttons[-1] == "Write the agent",
+    check("model behavior change runs", result["status"] == "live" and tapped and buttons[-1] == "Write the agent",
           {"reload": result, "buttons": buttons})
 
     edit(list_view, '            .navigationTitle("Inbox")\n',
@@ -81,11 +88,11 @@ try:
     open(list_view, "a").write("\nprivate struct Badge: View {\n    let text: String\n"
                                "    var body: some View { Text(text).padding().background(.yellow, in: Capsule()) }\n}\n")
     result = cli("reload", list_view)
-    check("new function and new view type", result["ok"] and "2 left" in result.get("visibleText", []), result)
+    check("new function and new view type", result["status"] == "live" and "2 left" in result.get("visibleText", []), result)
 
     edit(badge, 'Text("\\(remaining) open")', 'Text("\\(remaining) to do")')
     result = cli("reload", badge)
-    check("edit in a Swift package", result["ok"] and "2 to do" in result.get("visibleText", []), result)
+    check("edit in a Swift package", result["status"] == "live" and "2 to do" in result.get("visibleText", []), result)
 finally:
     for path, text in originals.items():
         open(path, "w").write(text)

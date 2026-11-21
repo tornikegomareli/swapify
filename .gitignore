@@ -2,5 +2,5 @@ build/
 *.dSYM/
 .DS_Store
 .build/
-.hotreload/
+.swapify/
 Examples/*/*.xcodeproj/
