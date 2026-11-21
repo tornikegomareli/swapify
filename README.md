@@ -48,6 +48,7 @@ Background and sources: `docs/research/ios-simulator-hot-reload.md`. Experiments
 
 ## Limits
 
+- **SwiftUI refresh only.** In UIKit code, methods get the new bodies, but nothing calls `viewDidLoad` again. The change shows the next time that code runs. This follows from the mechanism and is untested.
 - **Simulator only.** The agent writes jumps into the patch's code pages, which a device does not allow.
 - **Debug builds only.** `-enable-implicit-dynamic` makes calls slower.
 - **Needs a rebuild:**
