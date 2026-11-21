@@ -79,6 +79,15 @@ public enum Shell {
     }
 }
 
+/// The real path, with symlinks resolved and `/private` kept. Simulator tools
+/// do not map `/tmp` to `/private/tmp` the way the host does, and
+/// `URL.resolvingSymlinksInPath()` strips `/private` on purpose.
+func realPath(_ path: String) -> String {
+    guard let pointer = realpath(path, nil) else { return path }
+    defer { free(pointer) }
+    return String(cString: pointer)
+}
+
 /// Milliseconds since `start`, for timings in reports.
 func milliseconds(since start: ContinuousClock.Instant) -> Int {
     let elapsed = ContinuousClock.now - start

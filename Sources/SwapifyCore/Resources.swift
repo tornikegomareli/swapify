@@ -8,7 +8,7 @@ public enum Resources {
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 
     static var prefix: URL {
-        URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        URL(fileURLWithPath: realPath(Bundle.main.executablePath ?? CommandLine.arguments[0]))
             .deletingLastPathComponent().deletingLastPathComponent()
     }
 

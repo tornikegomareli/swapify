@@ -31,14 +31,8 @@ public struct Session: Codable, Sendable {
 public struct Workspace: Sendable {
     public let root: URL
 
-    /// Uses the real path: simctl does not map `/tmp` to `/private/tmp` the way
-    /// the host does, and `URL.resolvingSymlinksInPath()` strips `/private`.
     public init(root: URL) {
-        let real = realpath(root.path, nil).map { pointer in
-            defer { free(pointer) }
-            return String(cString: pointer)
-        }
-        self.root = URL(fileURLWithPath: real ?? root.path, isDirectory: true)
+        self.root = URL(fileURLWithPath: realPath(root.path), isDirectory: true)
     }
 
     /// The nearest directory at or above `path` that has a `swapify.json` or a
