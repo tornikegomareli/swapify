@@ -11,6 +11,7 @@
 // app's original, so new code keeps using the original types and storage.
 //
 // Protocol (one line per command on 127.0.0.1:$HOTRELOAD_PORT, default 8899):
+//   ping                         -> {"ok":true,"generation":N}
 //   load <absolute dylib path>   -> {"ok":true,"generation":N,...}
 //   refresh                      -> re-renders every SwiftUI hosting view
 #import <UIKit/UIKit.h>
@@ -300,7 +301,9 @@ static void serve(int client) {
     char line[PATH_MAX + 16], reply[PATH_MAX + 256];
     while (fgets(line, sizeof line, io)) {
         line[strcspn(line, "\r\n")] = 0;
-        if (strncmp(line, "load ", 5) == 0) {
+        if (strcmp(line, "ping") == 0) {
+            snprintf(reply, sizeof reply, "{\"ok\":true,\"generation\":%d}", generation);
+        } else if (strncmp(line, "load ", 5) == 0) {
             loadPatch(line + 5, reply, sizeof reply);
         } else if (strcmp(line, "refresh") == 0) {
             __block double ms = 0;
