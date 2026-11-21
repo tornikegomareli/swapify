@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>swapify</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Agentic hot reload for iOS apps. Patch Swift edits into the running simulator app in half a second, with app state kept.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;600;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: an instrument panel. Narrative on the left, a live readout (phone + reload timeline) on the right;
+   below, the mechanism drawn as two Mach-O images with pointers between them. */
+:root {
+  --ground: #eef1f4;      /* cool panel grey, biased toward the ink */
+  --surface: #f8fafb;
+  --ink: #141a22;
+  --muted: #5b6573;
+  --line: #d3d9e0;
+  --swift: #e8462c;       /* Swift's orange, the only accent */
+  --swift-soft: #fbe3dd;
+  --signal: #1d7a52;      /* "live" state */
+  --code-bg: #e3e8ee;
+  --phone: #141a22;
+  --display: "Martian Mono", "SF Mono", ui-monospace, Menlo, monospace;
+  --body: "IBM Plex Sans", -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", "SF Mono", ui-monospace, Menlo, monospace;
+  --step--1: 0.8125rem;
+  --step-0: 1rem;
+  --step-1: 1.25rem;
+  --step-2: 1.75rem;
+  --step-3: clamp(2rem, 1.2rem + 3.6vw, 3.5rem);
+  --radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #10151b; --surface: #161d25; --ink: #e7ecf1; --muted: #93a0ae; --line: #27313c;
+    --swift: #ff6a4d; --swift-soft: #3a1f1a; --signal: #46c58c; --code-bg: #1c252f; --phone: #05080b;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #10151b; --surface: #161d25; --ink: #e7ecf1; --muted: #93a0ae; --line: #27313c;
+  --swift: #ff6a4d; --swift-soft: #3a1f1a; --signal: #46c58c; --code-bg: #1c252f; --phone: #05080b;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 var(--step-0)/1.6 var(--body);
+  -webkit-font-smoothing: antialiased;
+}
+.wrap {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+a { color: inherit; }
+code, pre, .mono { font-family: var(--mono); }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; letter-spacing: -0.02em; }
+h2 { font-size: var(--step-2); font-weight: 600; }
+h3 { font-size: var(--step-0); font-weight: 600; letter-spacing: 0; }
+p { margin: 0; max-width: 62ch; }
+.label {
+  font: 500 0.72rem/1 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+:focus-visible { outline: 2px solid var(--swift); outline-offset: 3px; border-radius: 4px; }
+
+/* Header */
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
+  z-index: 10; background: var(--ground);
+}
+header.top {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: color-mix(in srgb, var(--ground) 88%, transparent);
+  backdrop-filter: saturate(1.4) blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+header.top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 14px; }
+.mark { font: 800 1.05rem/1 var(--display); letter-spacing: -0.04em; text-decoration: none; display: flex; align-items: center; gap: 10px; }
+.mark svg { flex: none; }
+nav { display: flex; gap: 22px; font-size: var(--step--1); }
+nav a { text-decoration: none; color: var(--muted); }
+nav a:hover { color: var(--ink); }
+
+/* Hero */
+.hero { padding-block: clamp(40px, 7vw, 88px) clamp(40px, 6vw, 72px); }
+.hero .wrap { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: clamp(32px, 5vw, 72px); align-items: center; }
+.hero h1 { font-size: var(--step-3); font-weight: 800; line-height: 1.05; }
+.hero h1 em { font-style: normal; color: var(--swift); }
+.hero .lede { margin-top: 22px; font-size: var(--step-1); line-height: 1.5; color: var(--muted); max-width: 34ch; }
+.hero .lede strong { color: var(--ink); font-weight: 500; }
+.install { margin-top: 30px; display: grid; gap: 10px; max-width: 560px; }
+.cmd {
+  display: flex; align-items: center; gap: 12px; min-width: 0;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 10px 10px 16px;
+}
+.cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font-size: 0.86rem; }
+.cmd code::before { content: "$ "; color: var(--muted); }
+.copy {
+  flex: none; font: 500 0.75rem/1 var(--mono); padding: 8px 10px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--ground); color: var(--ink);
+}
+.copy:hover { border-color: var(--swift); }
+.req { font-size: var(--step--1); color: var(--muted); }
+
+/* Readout: phone + timeline */
+.readout { display: grid; gap: 18px; justify-items: center; }
+.phone {
+  width: min(300px, 100%); aspect-ratio: 9 / 19.5; max-width: 100%;
+  background: var(--phone); border-radius: 46px; padding: 11px;
+  box-shadow: 0 30px 60px -30px rgb(20 26 34 / 0.45), 0 0 0 1px rgb(255 255 255 / 0.06) inset;
+}
+.screen {
+  position: relative; height: 100%; border-radius: 36px; overflow: hidden;
+  background: #f2f2f7; color: #111; font-family: -apple-system, "SF Pro Text", var(--body);
+}
+.island { position: absolute; top: 10px; left: 50%; translate: -50% 0; width: 32%; height: 24px; border-radius: 14px; background: #000; }
+.status { display: flex; justify-content: space-between; padding: 14px 26px 0; font: 600 0.72rem/1 -apple-system, var(--body); }
+.nav-title { padding: 26px 18px 6px; font: 700 1.6rem/1.1 -apple-system, var(--body); letter-spacing: -0.02em; position: relative; height: 3.2rem; }
+.nav-title span { position: absolute; left: 18px; transition: opacity .25s ease, translate .25s ease; }
+.section-head { padding: 4px 30px 6px; font: 600 0.68rem/1.2 -apple-system, var(--body); color: #8a8a8e; text-transform: uppercase; letter-spacing: .02em; transition: opacity .25s; }
+.list { margin: 0 14px; background: #fff; border-radius: 12px; overflow: hidden; }
+.row { display: flex; align-items: center; gap: 10px; padding: 11px 14px; font-size: 0.8rem; border-bottom: 1px solid #e5e5ea; transition: color .25s; }
+.row:last-child { border-bottom: 0; }
+.dot { width: 14px; height: 14px; border-radius: 50%; border: 1.6px solid currentColor; flex: none; transition: background .25s, border-color .25s; }
+.badge { position: absolute; bottom: 26px; left: 50%; translate: -50% 0; font: 600 0.72rem/1 -apple-system, var(--body); background: #0a84ff; color: #fff; padding: 9px 16px; border-radius: 99px; transition: opacity .25s, translate .25s; white-space: nowrap; }
+
+/* v1 / v2 states of the phone */
+.screen .v2 { opacity: 0; translate: 0 6px; }
+.screen.live .v1 { opacity: 0; translate: 0 -6px; }
+.screen.live .v2 { opacity: 1; translate: 0 0; }
+.screen .row { color: #0a84ff; }
+.screen.live .row { color: #111; }
+.screen.live .row.done .dot { background: #34c759; border-color: #34c759; }
+.screen.live .row.done .text { text-decoration: line-through; color: #8a8a8e; }
+.screen:not(.live) .badge, .screen:not(.live) .section-head { opacity: 0; }
+
+.timeline { width: min(360px, 100%); }
+.timeline .label { display: flex; justify-content: space-between; margin-bottom: 8px; }
+.bar { position: relative; height: 12px; border-radius: 6px; background: var(--code-bg); overflow: hidden; display: flex; }
+.seg { height: 100%; width: 0; transition: width linear; }
+.seg.compile { background: var(--swift); }
+.seg.link { background: color-mix(in srgb, var(--swift) 55%, var(--ground)); }
+.seg.patch { background: var(--ink); }
+.seg.refresh { background: var(--signal); }
+.seg.snap { background: color-mix(in srgb, var(--signal) 45%, var(--ground)); }
+.legend { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px 14px; font: 400 0.72rem/1.2 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+.state { font: 600 0.78rem/1 var(--mono); color: var(--muted); }
+.state.on { color: var(--signal); }
+
+/* Sections */
+section.band { padding-block: clamp(48px, 7vw, 88px); border-top: 1px solid var(--line); }
+.band-head { display: grid; gap: 12px; margin-bottom: 36px; }
+.band-head p { color: var(--muted); }
+
+.transcript { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.turn { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; display: grid; gap: 10px; min-width: 0; align-content: start; }
+.turn pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 0.8rem; line-height: 1.55; }
+.turn .who { display: flex; align-items: center; gap: 8px; }
+.pill { font: 500 0.68rem/1 var(--mono); padding: 5px 8px; border-radius: 99px; background: var(--code-bg); color: var(--muted); }
+.pill.live { background: color-mix(in srgb, var(--signal) 16%, transparent); color: var(--signal); }
+.pill.warn { background: var(--swift-soft); color: var(--swift); }
+pre .k { color: var(--swift); }
+pre .s { color: var(--signal); }
+
+/* Mechanism diagram */
+.diagram { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: clamp(14px, 3vw, 28px); overflow-x: auto; }
+.diagram svg { display: block; min-width: 760px; width: 100%; height: auto; }
+.diagram text { font-family: var(--mono); }
+.steps { margin-top: 28px; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 26px 32px; }
+.step { display: grid; gap: 8px; align-content: start; }
+.step p { color: var(--muted); font-size: 0.94rem; }
+.step code { font-size: 0.84rem; color: var(--ink); background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+
+/* Numbers */
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(28px, 5vw, 64px); align-items: start; }
+table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+th, td { text-align: left; padding: 11px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 500 0.72rem/1 var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+td.num { font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 16px; }
+td.ok { color: var(--signal); font-family: var(--mono); font-size: 0.82rem; white-space: nowrap; padding-left: 16px; }
+td.rb { color: var(--swift); font-family: var(--mono); font-size: 0.82rem; white-space: nowrap; padding-left: 16px; }
+
+.tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.tool { background: var(--surface); padding: 18px; display: grid; gap: 6px; align-content: start; }
+.tool code { font: 600 0.9rem/1 var(--mono); color: var(--swift); }
+.tool p { font-size: 0.88rem; color: var(--muted); }
+.agents-cmds { margin-top: 22px; display: grid; gap: 10px; max-width: 560px; }
+
+footer { border-top: 1px solid var(--line); padding-block: 36px; color: var(--muted); font-size: var(--step--1); }
+footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+
+@media (max-width: 860px) {
+  .hero .wrap, .split { grid-template-columns: minmax(0, 1fr); }
+  nav a.hide-narrow { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="mark" href="#top" aria-label="swapify home">
+      <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+        <rect x="1" y="1" width="20" height="20" rx="6" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M6 8.5h8.5l-2.5-2.5M16 13.5H7.5l2.5 2.5" fill="none" stroke="var(--swift)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      swapify
+    </a>
+    <nav>
+      <a href="#loop">Loop</a>
+      <a href="#how" class="hide-narrow">How it works</a>
+      <a href="#agents">Agents</a>
+      <a href="https://github.com/tornikegomareli/swapify">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <span class="label">Agentic hot reload for iOS</span>
+        <h1 style="margin-top:18px">Edit Swift.<br>See it live in <em>0.5&nbsp;s</em>.</h1>
+        <p class="lede">Your coding agent edits a file. swapify patches it into the <strong>running simulator app</strong> and hands the agent a screenshot and the visible text. No rebuild, no relaunch. <strong>App state stays.</strong></p>
+        <div class="install">
+          <div class="cmd"><code id="c1">brew tap tornikegomareli/swapify https://github.com/tornikegomareli/swapify</code><button class="copy" type="button" data-copy="c1">Copy</button></div>
+          <div class="cmd"><code id="c2">brew install --HEAD swapify</code><button class="copy" type="button" data-copy="c2">Copy</button></div>
+          <div class="cmd"><code id="c3">swapify init &amp;&amp; swapify run</code><button class="copy" type="button" data-copy="c3">Copy</button></div>
+          <p class="req">Apple silicon · Xcode 26+ · iOS 26+ simulator · MIT</p>
+        </div>
+      </div>
+
+      <div class="readout" aria-label="A reload of TaskListView.swift">
+        <div class="phone">
+          <div class="screen live" id="screen">
+            <div class="island"></div>
+            <div class="status"><span>9:41</span><span>●●●</span></div>
+            <div class="nav-title"><span class="v1">Tasks</span><span class="v2">Today</span></div>
+            <div class="section-head">1 of 3 done</div>
+            <div class="list">
+              <div class="row done"><span class="dot"></span><span class="text">Write the agent</span></div>
+              <div class="row"><span class="dot"></span><span class="text">Patch chain roots</span></div>
+              <div class="row"><span class="dot"></span><span class="text">Refresh SwiftUI</span></div>
+            </div>
+            <div class="badge">2 left</div>
+          </div>
+        </div>
+        <div class="timeline">
+          <div class="label"><span>swapify reload TaskListView.swift</span><span class="state on" id="state">✓ live</span></div>
+          <div class="bar" id="bar">
+            <span class="seg compile" data-ms="230"></span>
+            <span class="seg link" data-ms="210"></span>
+            <span class="seg patch" data-ms="14"></span>
+            <span class="seg refresh" data-ms="5"></span>
+            <span class="seg snap" data-ms="53"></span>
+          </div>
+          <div class="legend">
+            <span><i style="background:var(--swift)"></i>compile 230</span>
+            <span><i style="background:color-mix(in srgb,var(--swift) 55%,var(--ground))"></i>link 210</span>
+            <span><i style="background:var(--ink)"></i>patch 14</span>
+            <span><i style="background:var(--signal)"></i>refresh 5</span>
+            <span><i style="background:color-mix(in srgb,var(--signal) 45%,var(--ground))"></i>snapshot 53</span>
+            <span>= 512 ms</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="loop">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="label">The loop</span>
+        <h2>The agent edits. The app answers.</h2>
+        <p>In Claude Code, a hook reloads every Swift file the agent writes and puts the result next to the tool call. Other agents call the same reload over MCP. The model sees what changed on screen without asking.</p>
+      </div>
+      <div class="transcript">
+        <div class="turn">
+          <div class="who"><span class="pill">Edit</span><span class="label">TaskListView.swift</span></div>
+<pre>  .navigationTitle(<span class="k">"Today"</span>)
+  .safeAreaInset(edge: .bottom) {
+      ProgressBadge(text: leftText())
+  }</pre>
+        </div>
+        <div class="turn">
+          <div class="who"><span class="pill live">live</span><span class="label">PostToolUse hook</span></div>
+<pre>swapify: TaskListView.swift is live in the running app (generation 2, 696 ms). Screenshot: .swapify/screens/reload-2.png. Visible text: Today | 0 of 3 done | Write the agent | Patch chain roots | Refresh SwiftUI | <span class="s">3 left</span></pre>
+        </div>
+        <div class="turn">
+          <div class="who"><span class="pill warn">rebuild</span><span class="label">Layout guard</span></div>
+<pre>swapify: TaskModel.swift was not applied. The layout of TaskItem changed (stored properties changed), which a reload cannot patch. The app still runs the previous code. Run `swapify run` to rebuild.</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="how">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="label">How it works</span>
+        <h2>Two images, pointers in both directions.</h2>
+        <p>swapify compiles the edited file unchanged, with the build's own command, into a dylib. An agent inside the app loads it and rewires the app and the patch so that old callers run new bodies, and new code keeps the old types, objects and storage.</p>
+      </div>
+
+      <div class="diagram">
+        <svg viewBox="0 0 980 360" role="img" aria-labelledby="diagram-title">
+          <title id="diagram-title">The app image's chain roots point to the patch; the patch's accessors jump back to the app.</title>
+          <defs>
+            <marker id="arrow-swift" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--swift)"/></marker>
+            <marker id="arrow-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+          </defs>
+          <text x="20" y="28" font-size="12" fill="var(--muted)" letter-spacing="1.4">APP · Showcase.debug.dylib</text>
+          <text x="600" y="28" font-size="12" fill="var(--muted)" letter-spacing="1.4">PATCH · patch.dylib (generation 3)</text>
+          <g font-size="12.5" fill="var(--ink)">
+            <rect x="20" y="44" width="360" height="290" rx="12" fill="var(--ground)" stroke="var(--line)"/>
+            <rect x="600" y="44" width="360" height="290" rx="12" fill="var(--ground)" stroke="var(--line)"/>
+            <text x="40" y="80">$s8Showcase12TaskListViewV4bodyQrvgTX</text>
+            <text x="40" y="104" fill="var(--muted)">{ impl → patch body, next }</text>
+            <text x="40" y="146">$s8Showcase9TaskModelC6toggle…FTX</text>
+            <text x="40" y="170" fill="var(--muted)">{ impl → patch toggle, next }</text>
+            <text x="40" y="222">$s8Showcase8TaskItemVMa</text>
+            <text x="40" y="246" fill="var(--muted)">original metadata accessor</text>
+            <text x="40" y="288">$s8Showcase9TaskModelCMa</text>
+            <text x="40" y="312" fill="var(--muted)">original metadata + field offsets</text>
+
+            <text x="620" y="80">TaskListView.body.getter</text>
+            <text x="620" y="104" fill="var(--muted)">new body, reads its own root</text>
+            <text x="620" y="146">TaskModel.toggle(_:)</text>
+            <text x="620" y="170" fill="var(--muted)">new body</text>
+            <text x="620" y="222">$s8Showcase8TaskItemVMa</text>
+            <text x="620" y="246" fill="var(--muted)">ldr x16, #8 · br x16</text>
+            <text x="620" y="288">$s…Wvd · $s…WP</text>
+            <text x="620" y="312" fill="var(--muted)">copied from the app</text>
+          </g>
+          <path d="M384 86 C 470 86, 510 76, 596 76" fill="none" stroke="var(--swift)" stroke-width="2" marker-end="url(#arrow-swift)"/>
+          <path d="M384 152 C 470 152, 510 142, 596 142" fill="none" stroke="var(--swift)" stroke-width="2" marker-end="url(#arrow-swift)"/>
+          <path d="M596 218 C 510 218, 470 228, 384 228" fill="none" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#arrow-ink)"/>
+          <path d="M596 284 C 510 284, 470 294, 384 294" fill="none" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#arrow-ink)"/>
+          <text x="490" y="66" font-size="11.5" fill="var(--swift)" text-anchor="middle">old → new</text>
+          <text x="490" y="270" font-size="11.5" fill="var(--muted)" text-anchor="middle">new → old</text>
+        </svg>
+      </div>
+
+      <div class="steps">
+        <div class="step">
+          <h3>Every function is a door</h3>
+          <p>The app is built with <code>-enable-implicit-dynamic</code>. Each Swift function first asks its chain root <code>$s…TX</code> where its body is. Copying the patch's root into the app's root redirects direct calls, vtable dispatch and protocol witnesses.</p>
+        </div>
+        <div class="step">
+          <h3>New code, old types</h3>
+          <p>The patch carries a second copy of every type in the file. Its metadata accessors and addressors jump to the app's, and its field offsets and witness tables are copied over, so <code>@State</code>, singletons and casts survive.</p>
+        </div>
+        <div class="step">
+          <h3>A layout guard</h3>
+          <p>Before patching, the agent compares each nominal type descriptor <code>$s…Mn</code> with the app's: field names, types and vtable size. A changed layout is refused, and the agent is told to rebuild.</p>
+        </div>
+        <div class="step">
+          <h3>SwiftUI redraws, state kept</h3>
+          <p>The agent invalidates each <code>_UIHostingView</code> graph the way Xcode Previews does, but without the phase change that resets <code>@State</code>. Then it renders a 1x snapshot and reads the accessibility tree.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap split">
+      <div>
+        <div class="band-head">
+          <span class="label">Measured</span>
+          <h2>Where the half second goes.</h2>
+          <p>A warm reload of a SwiftUI view file, Xcode 27.2, iOS 27.2 simulator, Apple silicon. A reload costs what compiling that one file costs.</p>
+        </div>
+        <table>
+          <thead><tr><th>Step</th><th style="text-align:right">ms</th></tr></thead>
+          <tbody>
+            <tr><td>Compile the edited file, its own frontend command</td><td class="num">230</td></tr>
+            <tr><td>Link into a dylib</td><td class="num">210</td></tr>
+            <tr><td><code>dlopen</code>, guard, patch</td><td class="num">14</td></tr>
+            <tr><td>SwiftUI graph invalidation</td><td class="num">5</td></tr>
+            <tr><td>Snapshot and visible text</td><td class="num">53</td></tr>
+            <tr><td><strong>Edit to verified screen</strong></td><td class="num"><strong>512</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <div class="band-head">
+          <span class="label">Scope</span>
+          <h2>What reloads.</h2>
+          <p>Anything that keeps the memory layout of existing objects reloads. The guard catches the rest.</p>
+        </div>
+        <table>
+          <tbody>
+            <tr><td>Bodies of functions, methods, initializers, computed properties</td><td class="ok">live</td></tr>
+            <tr><td>SwiftUI structure and modifiers, with <code>@State</code></td><td class="ok">live</td></tr>
+            <tr><td>New functions, new types, <code>private</code> helpers</td><td class="ok">live</td></tr>
+            <tr><td>Files in Swift packages the app builds</td><td class="ok">live</td></tr>
+            <tr><td>Stored properties added, removed or retyped</td><td class="rb">rebuild</td></tr>
+            <tr><td>Methods added to a non-final class</td><td class="rb">rebuild</td></tr>
+            <tr><td>New files, resources, <code>Info.plist</code></td><td class="rb">rebuild</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="agents">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="label">Agents</span>
+        <h2>Claude Code, Codex, Cursor, anything with MCP.</h2>
+        <p><code>swapify init</code> installs a Claude Code hook, a skill and a project MCP server. The MCP server speaks the 2026-07-28 revision and the earlier <code>initialize</code> handshake.</p>
+      </div>
+      <div class="tools">
+        <div class="tool"><code>reload</code><p>Patch edited files; returns the screenshot and the visible text.</p></div>
+        <div class="tool"><code>ui</code><p>Visible accessibility elements, with traits and frames.</p></div>
+        <div class="tool"><code>tap</code><p>Activate an element by label or identifier, then read the screen.</p></div>
+        <div class="tool"><code>screenshot</code><p>The app at 1x, or the whole simulator with <code>full</code>.</p></div>
+        <div class="tool"><code>run</code><p>Build with reload support and launch in the simulator.</p></div>
+        <div class="tool"><code>status</code><p>Xcode, project, build, simulator and app checks.</p></div>
+      </div>
+      <div class="agents-cmds">
+        <div class="cmd"><code id="c4">claude mcp add swapify -- swapify mcp</code><button class="copy" type="button" data-copy="c4">Copy</button></div>
+        <div class="cmd"><code id="c5">codex mcp add swapify -- swapify mcp</code><button class="copy" type="button" data-copy="c5">Copy</button></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>swapify · MIT · Simulator only, Debug builds only.</span>
+    <span><a href="https://github.com/tornikegomareli/swapify/blob/main/docs/architecture.md">Architecture</a> · <a href="https://github.com/tornikegomareli/swapify/blob/main/docs/agents.md">Agents</a> · <a href="https://github.com/tornikegomareli/swapify">GitHub</a></span>
+  </div>
+</footer>
+
+<script>
+  // Copy buttons. Clipboard writes can be refused; then the command is selected instead.
+  document.querySelectorAll(".copy").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var code = document.getElementById(button.dataset.copy);
+      var text = code.textContent;
+      var done = function () { button.textContent = "Copied"; setTimeout(function () { button.textContent = "Copy"; }, 1400); };
+      var select = function () { var range = document.createRange(); range.selectNodeContents(code); var s = getSelection(); s.removeAllRanges(); s.addRange(range); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, select);
+      else select();
+    });
+  });
+
+  // The reload loop: v1 on screen, the bar fills at a quarter of real speed, then v2 is live.
+  // It starts from the live state, so the page is complete at rest.
+  (function () {
+    var screen = document.getElementById("screen");
+    var state = document.getElementById("state");
+    var segs = Array.prototype.slice.call(document.querySelectorAll("#bar .seg"));
+    var total = segs.reduce(function (sum, s) { return sum + Number(s.dataset.ms); }, 0);
+    var scale = 4;
+    function fill(instant) {
+      segs.forEach(function (s) { s.style.transitionDuration = "0ms"; s.style.width = (Number(s.dataset.ms) / total * 100) + "%"; });
+    }
+    fill(true);
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    function cycle() {
+      screen.classList.remove("live");
+      state.textContent = "editing…"; state.classList.remove("on");
+      segs.forEach(function (s) { s.style.transitionDuration = "0ms"; s.style.width = "0%"; });
+      var delay = 900;
+      segs.forEach(function (s) {
+        var ms = Number(s.dataset.ms) * scale;
+        setTimeout(function () {
+          s.style.transitionDuration = ms + "ms";
+          s.style.width = (Number(s.dataset.ms) / total * 100) + "%";
+        }, delay);
+        delay += ms;
+      });
+      setTimeout(function () {
+        screen.classList.add("live");
+        state.textContent = "✓ live · 512 ms"; state.classList.add("on");
+      }, delay);
+      setTimeout(cycle, delay + 3600);
+    }
+    setTimeout(cycle, 2600);
+  })();
+</script>
+</body>
+</html>

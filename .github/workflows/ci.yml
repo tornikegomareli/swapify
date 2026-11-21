@@ -1,0 +1,19 @@
+name: CI
+
+# Pull requests and manual runs only while the repository is private:
+# macOS runner minutes are billed at a multiple of Linux minutes.
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: swift test
+      - name: Build the agent
+        run: scripts/build-agent.sh
+      - name: Build the release binary
+        run: swift build -c release
