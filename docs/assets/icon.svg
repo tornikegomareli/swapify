@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <title>swapify</title>
+  <defs>
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d2026"/>
+      <stop offset="1" stop-color="#07080a"/>
+    </linearGradient>
+    <linearGradient id="hot" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff9a52"/>
+      <stop offset="1" stop-color="#f2402b"/>
+    </linearGradient>
+    <linearGradient id="cold" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#b9c0ca"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="230" fill="url(#ground)"/>
+  <rect x="3" y="3" width="1018" height="1018" rx="227" fill="none" stroke="#ffffff" stroke-opacity="0.09" stroke-width="6"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="76">
+    <path d="M272 384 H720 M618 282 L728 384 L618 486" stroke="url(#hot)"/>
+    <path d="M752 640 H304 M406 538 L296 640 L406 742" stroke="url(#cold)"/>
+  </g>
+</svg>

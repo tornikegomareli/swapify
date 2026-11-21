@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>swapify</title>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="6.5">
+    <path d="M12 23 H44 M36 15 L45 23 L36 31" stroke="#f2402b"/>
+    <path d="M52 41 H20 M28 33 L19 41 L28 49" stroke="currentColor"/>
+  </g>
+</svg>
