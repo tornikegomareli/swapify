@@ -19,7 +19,7 @@ In this repository, run `swift build` first and call `.build/debug/hotreload`.
 
 ## After each edit
 
-A PostToolUse hook reloads every `.swift` file you edit. Its message tells you one of three things:
+A PostToolUse hook reloads every `.swift` file you edit. Its message tells you one of four things:
 
 - **Live.** The message gives the screenshot path and the visible text. Read the screenshot when the change is visual.
 - **Does not compile.** The message lists the errors. The app still runs the previous code, so fix the errors.
