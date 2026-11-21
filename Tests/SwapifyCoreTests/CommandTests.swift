@@ -85,4 +85,18 @@ import Testing
         #expect(report.summary.contains("The layout of TaskItem changed (stored properties changed)"))
         #expect(report.summary.contains("swapify run"))
     }
+
+    @Test func headlineIsOneShortLine() {
+        var live = ReloadReport(status: .live, files: ["/p/View.swift"])
+        live.timings.total = 512
+        #expect(live.headline == "swapify: View.swift live in 512 ms")
+
+        var broken = ReloadReport(status: .compileError, files: ["/p/View.swift"])
+        broken.errors = ["View.swift:3: error: cannot find 'x' in scope"]
+        #expect(broken.headline == "swapify: View.swift does not compile, the app keeps the previous code")
+
+        var rebuild = ReloadReport(status: .needsRebuild, files: ["/p/Model.swift"])
+        rebuild.changedType = "TaskItem"
+        #expect(rebuild.headline == "swapify: Model.swift needs a rebuild, the layout of TaskItem changed")
+    }
 }

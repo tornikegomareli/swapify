@@ -231,17 +231,26 @@ extension Swapify {
             guard session.port != 0 else { return }  // never launched: stay quiet
 
             let message: String
+            let headline: String
             if session.commands[URL(fileURLWithPath: file).standardizedFileURL.path] == nil {
                 message = "swapify: \(URL(fileURLWithPath: file).lastPathComponent) is not part of the running app's build. "
                     + "If it is a new app file, run `swapify run` to include it."
+                headline = message
             } else {
                 do {
-                    message = try Reloader(workspace: workspace).reload(files: [file]).summary
+                    let report = try Reloader(workspace: workspace).reload(files: [file])
+                    message = report.summary
+                    headline = report.headline
                 } catch {
                     message = "swapify: \(URL(fileURLWithPath: file).lastPathComponent) was not reloaded: \(error)"
+                    headline = message
                 }
             }
-            let reply: [String: Any] = ["hookSpecificOutput": ["hookEventName": "PostToolUse", "additionalContext": message]]
+            // additionalContext goes to the model; systemMessage is the line the person sees.
+            let reply: [String: Any] = [
+                "systemMessage": headline,
+                "hookSpecificOutput": ["hookEventName": "PostToolUse", "additionalContext": message],
+            ]
             let data = try JSONSerialization.data(withJSONObject: reply, options: [.withoutEscapingSlashes])
             print(String(decoding: data, as: UTF8.self))
         }

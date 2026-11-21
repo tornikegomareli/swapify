@@ -38,9 +38,22 @@ public struct ReloadReport: Codable, Sendable {
         self.files = files
     }
 
+    private var names: String {
+        files.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: ", ")
+    }
+
+    /// One line for the person who watches the agent.
+    public var headline: String {
+        switch status {
+        case .live: return "swapify: \(names) live in \(timings.total) ms"
+        case .compileError: return "swapify: \(names) does not compile, the app keeps the previous code"
+        case .needsRebuild: return "swapify: \(names) needs a rebuild, the layout of \(changedType ?? "a type") changed"
+        case .failed: return "swapify: \(names) was not applied"
+        }
+    }
+
     /// Short, factual text for a coding agent.
     public var summary: String {
-        let names = files.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: ", ")
         switch status {
         case .live:
             var text = "swapify: \(names) is live in the running app (generation \(generation ?? 0), \(timings.total) ms)."

@@ -14,7 +14,7 @@ swapify gives a coding agent two ways in: a Claude Code hook that reloads after 
 
 Existing settings and servers in those files are kept. Run `swapify init --no-agents` to skip them.
 
-The hook reads the event on stdin. It does nothing unless the edited file is Swift and its project was launched with `swapify run`. Otherwise it reloads the file and returns the result as `additionalContext`, which Claude Code shows to the model next to the tool result:
+The hook reads the event on stdin. It does nothing unless the edited file is Swift and its project was launched with `swapify run`. Otherwise it reloads the file and returns the result twice. The full result goes to the model as `additionalContext`, next to the tool result. One line goes to you as `systemMessage`, for example `swapify: TaskListView.swift live in 512 ms`. The model sees:
 
 ```text
 swapify: TaskListView.swift is live in the running app (generation 3, 512 ms).
