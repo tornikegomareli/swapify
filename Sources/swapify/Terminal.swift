@@ -32,7 +32,8 @@ enum Terminal {
         case .live:
             let t = report.timings
             print("\(green("✓ live")) \(bold(names))  \(dim("generation \(report.generation ?? 0)"))")
-            print(dim("  compile \(t.compile) ms · link \(t.link) ms · patch \(t.patch) ms · refresh \(t.refresh) ms · total \(t.total) ms"))
+            let send = t.transfer.map { " · send \($0) ms" } ?? ""
+            print(dim("  compile \(t.compile) ms · link \(t.link) ms\(send) · patch \(t.patch) ms · refresh \(t.refresh) ms · total \(t.total) ms"))
             if let screenshot = report.screenshot { print("  \(dim("screenshot")) \(screenshot)") }
             if let text = report.visibleText, !text.isEmpty { print("  \(dim("visible   ")) \(text.joined(separator: " | "))") }
             for warning in report.errors { print("  \(yellow("warning")) \(warning)") }
@@ -42,7 +43,7 @@ enum Terminal {
         case .needsRebuild:
             print("\(yellow("! needs a rebuild")) \(bold(names))")
             print("  The layout of \(report.changedType ?? "a type") changed\(report.reason.map { ": \($0)" } ?? "").")
-            print("  The app still runs the previous code. Run `swapify run` to apply it.")
+            print("  The app still runs the previous code. Run `\(report.rebuildCommand ?? "swapify run")` to apply it.")
         case .failed:
             print("\(red("✗ not applied")) \(bold(names))")
             report.errors.forEach { print("  \($0)") }

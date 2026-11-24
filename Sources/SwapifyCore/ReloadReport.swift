@@ -19,6 +19,8 @@ public struct ReloadReport: Codable, Sendable {
         public var patch = 0
         public var refresh = 0
         public var total = 0
+        /// On a device: sending the patch to the phone. Nil on a simulator.
+        public var transfer: Int?
     }
 
     public var status: Status
@@ -32,6 +34,8 @@ public struct ReloadReport: Codable, Sendable {
     /// The type whose layout changed, for `needsRebuild`.
     public var changedType: String?
     public var reason: String?
+    /// The command that rebuilds and relaunches, if not `swapify run`: `swapify run --device`.
+    public var rebuildCommand: String?
 
     public init(status: Status, files: [String]) {
         self.status = status
@@ -66,7 +70,7 @@ public struct ReloadReport: Codable, Sendable {
         case .needsRebuild:
             return "swapify: \(names) was not applied. The layout of \(changedType ?? "a type") changed"
                 + (reason.map { " (\($0))" } ?? "")
-                + ", which a reload cannot patch. The app still runs the previous code. Run `swapify run` to rebuild."
+                + ", which a reload cannot patch. The app still runs the previous code. Run `\(rebuildCommand ?? "swapify run")` to rebuild."
         case .failed:
             return "swapify: \(names) was not applied. " + errors.joined(separator: " ")
         }

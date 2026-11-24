@@ -150,8 +150,9 @@ public struct Launcher: Sendable {
         session.host = try device.tunnelAddress()
         try workspace.save(session)
 
-        // Wait for this app's agent, then for the app to show a screen.
-        let agent = Agent(session: session)
+        // Wait for this app's agent, then for the app to show a screen. A plain
+        // connection: the device checks of Agent(session:) cost a second per try.
+        let agent = Agent(port: session.port, host: session.host, token: session.token)
         let deadline = ContinuousClock.now + .seconds(40)
         var ping: AgentPing?
         while true {
@@ -178,6 +179,9 @@ public struct Launcher: Sendable {
                                   console: workspace.consoleLog.path)
         report.device = device.name
         report.traced = ping?.traced
+        if let file = session.commands.keys.sorted().first(where: { FileManager.default.fileExists(atPath: $0) }) {
+            report.warmup = try Reloader(workspace: workspace).reload(files: [file], snapshot: false)
+        }
         return report
     }
 

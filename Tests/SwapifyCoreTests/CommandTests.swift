@@ -48,6 +48,23 @@ import Testing
         ])
     }
 
+    @Test func devicePatchesCompileToIRWithoutDebugInfo() {
+        let command = self.command + ["-g", "-debug-info-format=dwarf", "-dwarf-version=5"]
+        let ir = FrontendCommand.patchIR(command, primary: "/p/C.swift", output: "/tmp/C.ll")
+        #expect(ir.contains("-emit-ir") && !ir.contains("-c"))
+        #expect(!ir.contains { $0 == "-g" || $0.hasPrefix("-debug-info-format") || $0.hasPrefix("-dwarf-version") })
+        #expect(Array(ir.suffix(2)) == ["-o", "/tmp/C.ll"])
+        let built = FrontendCommand.patchIR(command, primary: "/p/C.swift", source: "/s/C.swift", output: "/tmp/C0.ll")
+        #expect(built.contains("/s/C.swift") && !built.contains("/p/C.swift"))
+    }
+
+    @Test func linksDevicePatchesWithTheDeviceLibraries() {
+        let device = command.map { $0 == "arm64-apple-ios27.0-simulator" ? "arm64-apple-ios27.0" : $0 }
+        let link = FrontendCommand.link(device, objects: ["/tmp/C.o"], output: "/tmp/patch.dylib")
+        #expect(link.contains("-L/tc/usr/lib/swift/iphoneos"))
+        #expect(FrontendCommand.link(command, objects: [], output: "/x").contains("-L/tc/usr/lib/swift/iphonesimulator"))
+    }
+
     @Test func linksWithTheToolchainNextToTheFrontend() {
         let link = FrontendCommand.link(command, objects: ["/tmp/C.o"], output: "/tmp/patch.dylib")
         #expect(link.first == "/tc/usr/bin/clang")
@@ -84,6 +101,12 @@ import Testing
         report.reason = "stored properties changed"
         #expect(report.summary.contains("The layout of TaskItem changed (stored properties changed)"))
         #expect(report.summary.contains("swapify run"))
+    }
+
+    @Test func deviceRebuildSummaryNamesTheDeviceCommand() {
+        var report = ReloadReport(status: .needsRebuild, files: ["/p/Model.swift"])
+        report.rebuildCommand = "swapify run --device"
+        #expect(report.summary.hasSuffix("Run `swapify run --device` to rebuild."))
     }
 
     @Test func headlineIsOneShortLine() {
