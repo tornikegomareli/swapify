@@ -15,6 +15,9 @@
 3. A direct symbolic reference to an imported descriptor (byte 1 + 32-bit offset) cannot point into
    another image, so it becomes an indirect one (byte 2 + offset to a local `got.` pointer), which is
    what Swift emits for types of other modules.
+4. A type or conformance new in the edit (the app does not export it) stays defined in the patch,
+   and so do the records that register it (__swift5_types, __swift5_proto, __swift5_fieldmd,
+   __swift5_assocty, __objc_classlist). Added for spike 05, whose edits add views.
 Prints what it did, and exits with an error if a kept definition still needs a relative reference
 to an imported symbol.
 """
@@ -24,6 +27,17 @@ import sys
 
 NAME = r'@("(?:[^"\\]|\\.)+"|[-a-zA-Z$._0-9]+)'
 ACCESSORS = ("Ma", "vau", "Wl", "Wa")
+REGISTRATION = re.compile(r'section "__(TEXT|DATA), ?__(swift5_types|swift5_proto|swift5_fieldmd|swift5_assocty|objc_classlist)')
+
+
+def owner(record):
+    """The type descriptor or conformance descriptor that a registration record is for."""
+    if record.startswith("objc_classes_"):
+        return record[len("objc_classes_"):]
+    for suffix, target in (("Hn", "Mn"), ("MF", "Mn"), ("Hc", "Mc"), ("MA", "Mc")):
+        if record.endswith(suffix):
+            return record[:-len(suffix)] + target
+    return None
 
 
 def bare(token):
@@ -110,6 +124,14 @@ def main():
     roots = [name for kind, name, body in entities if name and name not in imported and (
         (kind == "function" and not re.match(r"define (internal|private|linkonce_odr|weak_odr)", body[0]))
         or name.endswith(("TX", "Tx")))]
+    # A type or conformance that only the patch defines (new in the edit) keeps the records that
+    # register it with the runtime; the records of the app's types go.
+    for kind, name, body in entities:
+        if kind != "global" or not REGISTRATION.search(body[0]):
+            continue
+        target = owner(name)
+        if target and target in defined and target not in imported:
+            roots.append(name)
     reachable, stack = set(), list(roots)
     while stack:
         name = stack.pop()
