@@ -1,0 +1,67 @@
+App installed:
+launch with DYLD_INSERT_LIBRARIES=/private/var/mobile/Containers/Data/Application/3C1FAF43-F384-41E3-A437-9767285FD8BE/tmp/SwapifyAgent.dylib: 763 ms
+   Launched application with dev.swapify.spike.device.habits bundle identifier.
+   Waiting for the application to terminate…
+   [swapify] listening on [::]:7791
+connected to [fd95:d303:38f2::1]:7791 in 572 ms; ping: {'ok': True, 'protocol': 1, 'device': True, 'generation': 0, 'traced': False, 'swiftUIRefresh': True, 'bundleID': 'dev.swapify.spike.device.habits'}
+== 0-launch: Today | 0 of 4 done | Run | 12 days | Running | Read | 4 days | Bookmark | Meditate | 27 days | Leaf | Water | 9 days | Water Droplet
+== 1-v1 (v1): 756 ms from save to screenshot and text on the Mac  [imported from the app: MV 2, Ma 1, Mc 2, Mn 3, N 1, other 3]
+   compile to IR              170 ms  
+   rewrite IR                  62 ms  
+   clang                       38 ms  
+   link                       137 ms  
+   codesign                    54 ms  
+   send patch                  48 ms  187184 bytes
+   load                        35 ms  dlopen 19.4 ms, roots 1.43 ms, replaced 2, added 2
+   refresh                     31 ms  7 hosting views
+   screenshot to the Mac      144 ms  76677 bytes, rendered in 37 ms
+   visible text                27 ms  15 elements
+   seen: Today | 0 | of 4 done | Run | 12 days | Running | Read | 4 days | Bookmark | Meditate | 27 days | Leaf | Water | 9 days | Water Droplet
+== 2-v2 (v2): 757 ms from save to screenshot and text on the Mac  [imported from the app: MV 2, Ma 1, Mc 2, Mn 3, N 1, other 3]
+   compile to IR              231 ms  
+   rewrite IR                  76 ms  
+   clang                       48 ms  
+   link                       136 ms  
+   codesign                    45 ms  
+   send patch                  29 ms  256016 bytes
+   load                        31 ms  dlopen 15.2 ms, roots 1.44 ms, replaced 6, added 2
+   refresh                     43 ms  8 hosting views
+   screenshot to the Mac       90 ms  99762 bytes, rendered in 42 ms
+   visible text                17 ms  7 elements
+   seen: Today | 0 | of 4 done | Run = 12 days | Read = 4 days | Meditate = 27 days | Water = 9 days
+== tap Run: {'element': {'label': 'Run', 'value': '12 days', 'frame': [16, 346, 350, 88], 'identifier': '', 'traits': ['button']}, 'ok': True}
+   seen: Today | 1 | of 4 done | Run = 12 days, done | Read = 4 days | Meditate = 27 days | Water = 9 days
+== 4-v3 (v3): 848 ms from save to screenshot and text on the Mac  [imported from the app: MV 2, Ma 1, Mc 2, Mn 3, N 1, other 3]
+   compile to IR              230 ms  
+   rewrite IR                  77 ms  
+   clang                       51 ms  
+   link                       137 ms  
+   codesign                    45 ms  
+   send patch                 114 ms  259792 bytes
+   load                        36 ms  dlopen 18.7 ms, roots 1.43 ms, replaced 10, added 2
+   refresh                     40 ms  2 hosting views
+   screenshot to the Mac       87 ms  108469 bytes, rendered in 39 ms
+   visible text                21 ms  7 elements
+   seen: Today | 1 | of 4 done | Run = 12 days, done | Read = 4 days | Meditate = 27 days | Water = 9 days
+== state kept after v3: Run is done = True
+== 5-error (error): compile error reported after 196 ms, nothing sent:
+   /Users/tgomareli/Development/hotreloading-device-spike/Examples/Habits/Habits/TodayView.swift:26:30: error: cannot find 'todayTitle' in scope
+26 |             .navigationTitle(todayTitle)  // deliberate error: todayTitle is not defined
+   |                              `- error: cannot find 'todayTitle' in scope
+== after the compile error the screen text is unchanged: True
+== 6-store1 (store1): 738 ms from save to screenshot and text on the Mac  [imported from the app: MV 9, Ma 2, Mc 2, Mm 1, Mn 2, N 2, Tq 1, Wvd 2]
+   compile to IR              130 ms  
+   rewrite IR                  50 ms  
+   clang                       25 ms  
+   link                       138 ms  
+   codesign                    45 ms  
+   send patch                 159 ms  98016 bytes
+   load                        35 ms  dlopen 19.0 ms, roots 1.44 ms, replaced 12, added 0
+   refresh                     29 ms  2 hosting views
+   screenshot to the Mac       94 ms  108469 bytes, rendered in 54 ms
+   visible text                22 ms  7 elements
+   seen: Today | 1 | of 4 done | Run = 12 days, done | Read = 4 days | Meditate = 27 days | Water = 9 days
+== tap Meditate: {'element': {'label': 'Meditate', 'value': '27 days', 'frame': [16, 539, 169, 181], 'identifier': '', 'traits': ['button']}, 'ok': True}
+   seen: Today | 2 | of 4 done | Run = 12 days, done | Read = 4 days | Meditate = 28 days, done | Water = 9 days
+== the edited toggle ran (streak 27 -> 28): True
+== final ping: {'ok': True, 'protocol': 1, 'device': True, 'generation': 4, 'traced': False, 'swiftUIRefresh': True, 'bundleID': 'dev.swapify.spike.device.habits'}
