@@ -19,6 +19,6 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
         ),
-        .testTarget(name: "SwapifyCoreTests", dependencies: ["SwapifyCore"]),
+        .testTarget(name: "SwapifyCoreTests", dependencies: ["SwapifyCore"], exclude: ["Fixtures"]),
     ]
 )
