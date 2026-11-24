@@ -58,3 +58,29 @@ import Testing
         #expect(DevicePatches.images(in: app).map(\.lastPathComponent) == ["Habits", "Habits.debug.dylib", "Kit"])
     }
 }
+
+@Suite struct PlatformMismatchTests {
+    /// A session whose build is for one platform while its running app is on the other.
+    func reload(appPath: String, deviceName: String?) throws -> ReloadReport {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = Workspace(root: root)
+        var session = Session()
+        session.appPath = appPath
+        session.bundleID = "dev.swapify.test"
+        session.deviceName = deviceName
+        try workspace.save(session)
+        return try Reloader(workspace: workspace).reload(files: ["App/View.swift"])
+    }
+
+    @Test func refusesASimulatorBuildWhileTheSessionIsOnADevice() throws {
+        let report = try reload(appPath: "/d/Build/Products/Debug-iphonesimulator/App.app", deviceName: "Doomile")
+        #expect(report.status == .failed)
+        #expect(report.errors == ["The last build is for the simulator, but it is not running. Run `swapify run` again."])
+    }
+
+    @Test func refusesADeviceBuildWhileTheSessionIsInTheSimulator() throws {
+        let report = try reload(appPath: "/d/Build/Products/Debug-iphoneos/App.app", deviceName: nil)
+        #expect(report.errors == ["The last build is for a device, but it is not running. Run `swapify run --device` again."])
+    }
+}

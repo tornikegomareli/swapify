@@ -14,6 +14,14 @@ public struct Reloader: Sendable {
         let session = workspace.loadSession()
         let paths = files.map { URL(fileURLWithPath: $0, relativeTo: workspace.root).standardizedFileURL.path }
         var report = ReloadReport(status: .failed, files: paths)
+        // A run that built for one platform and failed to launch leaves the app of
+        // the other platform in the session. Its build commands do not fit that app.
+        let builtForDevice = session.appPath?.contains("-iphoneos/") == true
+        guard builtForDevice == (session.deviceName != nil) else {
+            report.errors = ["The last build is for \(builtForDevice ? "a device" : "the simulator"), but it is not running. "
+                             + "Run `swapify run\(builtForDevice ? " --device" : "")` again."]
+            return report
+        }
         let agent = Agent(workspace: workspace)
 
         // dlopen returns the image it already loaded for a known path, so every
