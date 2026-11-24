@@ -2,14 +2,35 @@
 
 ## 0.1.0 (unreleased)
 
-First release.
+The first release: hot reload for coding agents on iOS, in the simulator and on an iPhone.
 
-- `swapify init`, `run`, `reload`, `ui`, `tap`, `screenshot`, `doctor`, and `mcp`.
-- Reload through dynamic replacement chain roots, with type, static, field offset, and witness table sharing.
-- Layout guard for stored properties and class vtables.
-- SwiftUI redraw without resetting `@State`.
-- Claude Code hook and skill, and a dual-era MCP server (2026-07-28 and earlier `initialize`-based versions).
-- Homebrew formula and `make install`.
-- Apple silicon, Xcode 26 or later, iOS 26 or later simulators.
-- New Swift files reload without a rebuild. A new file borrows the build command of the nearest file the build compiled, and every patch compiles all files changed since the last build, in parallel, so types created since the build may change their stored properties. A build that still does not compile a reloaded new file names it: it is not in the target.
-- `swapify run --device`: the same loop on a connected iPhone, with no debugger. Patches bind to the app's types through dyld instead of jumps, the layout guard runs on the Mac, and the agent accepts only connections with the session token, over the CoreDevice tunnel. `reload`, `ui`, `tap`, `screenshot` (`--full` too), `doctor`, `mcp`, and the hook work against it.
+### What it does
+
+- `swapify run` builds a Debug app with reload support and launches it in the simulator. `swapify run --device` does the same on a connected iPhone, without a debugger.
+- After an edit, `swapify reload`, or the Claude Code hook, compiles the Swift files changed since the build and loads them into the running app. The app keeps its screen, its navigation stack and its `@State`.
+- New Swift files reload without a rebuild.
+- After each reload the agent gets a screenshot and the visible text. `swapify ui`, `tap` and `screenshot` let it read and use the screen.
+- If an edit does not compile, the app keeps running the last code that compiled, and the agent gets the compiler errors.
+- If an edit changes the stored properties of a type the app was built with, or the methods of a class, nothing is loaded, and the agent is told which type changed and to run `swapify run`.
+- `swapify init` adds a Claude Code hook and skill. `swapify mcp` offers the same steps to any MCP client (MCP 2026-07-28 and the earlier `initialize`-based versions).
+- `swapify doctor` checks the Mac, Xcode, the project, the simulator or iPhone, and the running app.
+
+### Install
+
+```sh
+brew tap tornikegomareli/swapify https://github.com/tornikegomareli/swapify
+brew install swapify
+```
+
+### Requirements
+
+- An Apple silicon Mac and Xcode 26 or later.
+- An iOS 26 or later simulator, or an iPhone with iOS 26 or later, Developer Mode on, and a signing team in the project.
+- Tested with Xcode 27.2 and iOS 27.2.
+
+### Known limits
+
+- Debug builds only.
+- UIKit screens do not redraw by themselves; observe the `SwapifyDidReload` notification to rebuild one.
+- The app must be in the foreground. On an iPhone, the phone must be unlocked.
+- Device mode has been tested on one iPhone with iOS 27.2, over Wi-Fi.
