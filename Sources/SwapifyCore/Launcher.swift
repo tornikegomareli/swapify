@@ -5,6 +5,13 @@ public struct BuildReport: Codable, Sendable {
     public var bundleID: String
     public var reloadableFiles: Int
     public var ms: Int
+    /// New files that were reloaded but that this build did not compile.
+    public var notInTarget: [String] = []
+
+    /// The line for each file of `notInTarget`.
+    public static func notInTargetMessages(_ files: [String]) -> [String] {
+        files.map { "\(URL(fileURLWithPath: $0).lastPathComponent) is not in the target; add it in Xcode." }
+    }
 }
 
 public struct LaunchReport: Codable, Sendable {
@@ -43,11 +50,12 @@ public struct Launcher: Sendable {
         guard result.succeeded else {
             if device != nil, let problem = Xcode.signingProblem(inBuildLog: log) { throw SwapifyError(problem) }
             let errors = Xcode.errors(inBuildLog: log)
+                + BuildReport.notInTargetMessages(session.borrowed.keys.sorted().filter { FileManager.default.fileExists(atPath: $0) })
             throw SwapifyError("The build failed. Full log: \(workspace.buildLog.path)\n" + errors.joined(separator: "\n"))
         }
 
         // Commands are printed only for files that compiled in this build.
-        session.commands.merge(Xcode.frontendCommands(inBuildLog: log)) { $1 }
+        let notInTarget = session.recordBuild(Xcode.frontendCommands(inBuildLog: log))
         guard !session.commands.isEmpty else {
             throw SwapifyError("The build was up to date, so no compile commands were captured. "
                                + "Delete \(workspace.derivedData.path) and build again.")
@@ -60,7 +68,7 @@ public struct Launcher: Sendable {
         session.bundleID = app.bundleID
         try workspace.save(session)
         return BuildReport(app: app.path.path, bundleID: app.bundleID,
-                           reloadableFiles: session.commands.count, ms: milliseconds(since: start))
+                           reloadableFiles: session.commands.count, ms: milliseconds(since: start), notInTarget: notInTarget)
     }
 
     /// Installs and launches the built app with the agent, then waits for its
@@ -114,7 +122,7 @@ public struct Launcher: Sendable {
         var report = LaunchReport(udid: device, bundleID: bundleID, port: session.port,
                                   console: workspace.consoleLog.path)
         if let file = session.commands.keys.sorted().first(where: { FileManager.default.fileExists(atPath: $0) }) {
-            report.warmup = try Reloader(workspace: workspace).reload(files: [file], snapshot: false)
+            report.warmup = try Reloader(workspace: workspace).reload(files: [file], snapshot: false, markChanged: false)
         }
         return report
     }
@@ -180,7 +188,7 @@ public struct Launcher: Sendable {
         report.device = device.name
         report.traced = ping?.traced
         if let file = session.commands.keys.sorted().first(where: { FileManager.default.fileExists(atPath: $0) }) {
-            report.warmup = try Reloader(workspace: workspace).reload(files: [file], snapshot: false)
+            report.warmup = try Reloader(workspace: workspace).reload(files: [file], snapshot: false, markChanged: false)
         }
         return report
     }
