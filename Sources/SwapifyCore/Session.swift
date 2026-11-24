@@ -9,6 +9,12 @@ public struct Session: Codable, Sendable {
     public var udid: String?
     public var deviceSet: String?
     public var port: UInt16 = 0
+    /// The device's name when the app runs on a device, nil on a simulator.
+    public var deviceName: String?
+    /// A device app: the SHA-1 of the certificate that signed it, which signs patches too.
+    public var signingIdentity: String?
+    /// A device app: the detached `devicectl` that holds its console and tunnel.
+    public var consolePID: Int32?
     /// A device app: the CoreDevice tunnel address the agent is reached on.
     public var host: String?
     /// A device app: the token its agent asks for. A new random one per launch.
@@ -34,6 +40,9 @@ public struct Session: Codable, Sendable {
         udid = try container.decodeIfPresent(String.self, forKey: .udid)
         deviceSet = try container.decodeIfPresent(String.self, forKey: .deviceSet)
         port = try container.decodeIfPresent(UInt16.self, forKey: .port) ?? 0
+        deviceName = try container.decodeIfPresent(String.self, forKey: .deviceName)
+        signingIdentity = try container.decodeIfPresent(String.self, forKey: .signingIdentity)
+        consolePID = try container.decodeIfPresent(Int32.self, forKey: .consolePID)
         host = try container.decodeIfPresent(String.self, forKey: .host)
         token = try container.decodeIfPresent(String.self, forKey: .token)
         generation = try container.decodeIfPresent(Int.self, forKey: .generation) ?? 0
@@ -71,6 +80,10 @@ public struct Workspace: Sendable {
     public var consoleLog: URL { stateDirectory.appendingPathComponent("console.log") }
     public var patches: URL { stateDirectory.appendingPathComponent("patches", isDirectory: true) }
     public var screens: URL { stateDirectory.appendingPathComponent("screens", isDirectory: true) }
+    /// Device builds: each reloadable file as it was built, for the layout guard.
+    public var originals: URL { stateDirectory.appendingPathComponent("originals", isDirectory: true) }
+    /// Device builds: the symbols the app exports, which patches bind to.
+    public var exports: URL { stateDirectory.appendingPathComponent("exports.txt") }
 
     public func loadSession() -> Session {
         guard let data = try? Data(contentsOf: sessionFile) else { return Session() }

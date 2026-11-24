@@ -15,6 +15,7 @@ install: build
 	install -d "$(PREFIX)/bin" "$(PREFIX)/lib/swapify" "$(PREFIX)/share/swapify"
 	install -m 755 .build/release/swapify "$(PREFIX)/bin/swapify"
 	install -m 644 .build/agent/SwapifyAgent.dylib "$(PREFIX)/lib/swapify/SwapifyAgent.dylib"
+	install -m 644 .build/agent/SwapifyAgent-iphoneos.dylib "$(PREFIX)/lib/swapify/SwapifyAgent-iphoneos.dylib"
 	install -m 644 skills/swapify/SKILL.md "$(PREFIX)/share/swapify/SKILL.md"
 
 uninstall:
