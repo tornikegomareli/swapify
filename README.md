@@ -10,7 +10,7 @@
   <img src=".github/assets/film.png" width="100%" alt="Claude Code in a terminal on the left, its last edit ending with the line 'swapify: TodayView.swift live in 908 ms'; on the right the Habits app on an iPhone, redesigned into cards, next to a label reading Live in 908 ms, state kept" />
 </p>
 
-swapify patches Swift edits into an iOS app that is already running in the simulator. Only the edited file is recompiled. The app keeps its screen, its navigation stack, `@State`, and its data. The agent gets a screenshot and the visible text back, so it can check what it did before it does the next thing.
+swapify patches Swift edits into an iOS app that is already running, in the simulator or on an iPhone. Only the edited file is recompiled. The app keeps its screen, its navigation stack, `@State`, and its data. The agent gets a screenshot and the visible text back, so it can check what it did before it does the next thing.
 
 A one-line edit to a view in a 979-file TCA app: 10.2 s to rebuild and relaunch, back at the first screen. 1.2 s with swapify, on the same screen.
 
@@ -49,7 +49,7 @@ Rebuild is an incremental `xcodebuild`, `simctl install`, and `simctl launch`, m
 ```sh
 swapify tap "Run"        # activates the element with that accessibility label or identifier
 swapify ui               # every visible element, top to bottom, with traits and frames
-swapify screenshot       # the app at 1x; --full for the whole simulator screen
+swapify screenshot       # the app at 1x; --full for the whole screen of the simulator or iPhone
 ```
 
 In the session above, the agent taps two habits, reads the screen, and checks that the ring says 2 of 4 and both streaks went up.
@@ -76,6 +76,7 @@ Requirements:
 
 - An Apple silicon Mac
 - Xcode 26 or later, and an iOS 26 or later simulator (tested with Xcode 27.2 and iOS 27.2)
+- For an iPhone: iOS 26 or later (tested with iOS 27.2), paired with the Mac by cable or Wi-Fi, Developer Mode on, and a signing team set in the project
 
 ## Using it
 
@@ -83,8 +84,9 @@ Requirements:
 cd MyApp                 # the directory with your .xcodeproj or .xcworkspace
 swapify init             # swapify.json, .gitignore, the Claude Code hook and skill, .mcp.json
 swapify run              # Debug build with reload support, boots a simulator, launches the app
+swapify run --device     # the same on the connected iPhone; --udid <name or UDID> picks one of several
 swapify reload MyApp/Views/HomeView.swift
-swapify doctor           # checks the Mac, Xcode, the project, the build, the simulator, the app
+swapify doctor           # checks the Mac, Xcode, the project, the build, the simulator or iPhone, the app
 ```
 
 Your Xcode project does not change. `swapify run` passes the settings it needs on the `xcodebuild` command line and keeps its own DerivedData in `.swapify/`. `run`, `reload`, `ui`, and `doctor` accept `--json`.
@@ -98,6 +100,23 @@ Your Xcode project does not change. `swapify run` passes the settings it needs o
 | A stored property added, removed, renamed, or retyped | Rebuild |
 | A method added to or removed from a non-final class | Rebuild |
 | A new file, resources, `Info.plist`, dependencies | Rebuild |
+
+## On an iPhone
+
+`swapify run --device` builds for the connected iPhone with the project's own signing, installs the app, and launches it with the agent, without a debugger. After that, `reload`, `ui`, `tap`, `screenshot`, `doctor`, `mcp`, and the Claude Code hook work as they do with the simulator, and the agent's replies come back over the encrypted CoreDevice tunnel, by cable or Wi-Fi.
+
+A reload of a SwiftUI view file of `Examples/Habits`, measured over Wi-Fi with a release build of swapify:
+
+| Step | ms |
+|---|---|
+| Compile the edited file, check its layout, bind it to the app | 449 to 472 |
+| Link and sign the patch | 325 to 333 |
+| Send it to the phone | 65 to 155 |
+| `dlopen`, patch, SwiftUI redraw | 40 to 50 |
+| Screenshot and visible text back on the Mac | 402 to 433 |
+| Edit to verified screen | 1321 to 1407 |
+
+iOS on a device does not let a process write code, so a device patch does not jump to the app's types: dyld binds it to them when it loads. The layout guard runs on the Mac, before anything is sent. The agent on the phone answers only connections that bring the token of the current launch. The screen stays on while the swapify-launched app runs; locking the phone by hand still works. [docs/architecture.md](docs/architecture.md#10-on-a-device) explains each part.
 
 ## How it works
 
@@ -145,10 +164,10 @@ A reload costs what compiling that one file costs. A 495-line TCA reducer takes 
 
 ## Limits
 
-- Simulator and Apple silicon only, Debug builds only.
+- Apple silicon Macs and Debug builds only. The simulator, or an iPhone with `swapify run --device`.
 - The SwiftUI redraw calls functions by their mangled names. If a future iOS renames them, reloads still apply and views redraw on their next state change. `swapify doctor` reports it.
 - UIKit screens do not redraw by themselves. Observe the `SwapifyDidReload` notification to rebuild one.
-- The app must be in the foreground: iOS suspends background apps.
+- The app must be in the foreground: iOS suspends background apps. On an iPhone, the phone must also be unlocked.
 
 ## Remove
 
@@ -164,6 +183,7 @@ In a project, delete `swapify.json`, `.swapify/`, the `swapify` entry in `.mcp.j
 swift build          # builds the CLI; the in-app agent is built on demand from Agent/
 make test            # unit tests
 make e2e             # the whole pipeline against Examples/Showcase in a simulator
+python3 -I scripts/e2e.py --device   # the same on the connected iPhone (Showcase needs a signing team)
 ```
 
 [CONTRIBUTING.md](CONTRIBUTING.md) explains the layout and how to check the SwiftUI symbols on a new iOS version. [docs/protocol.md](docs/protocol.md) is the agent's wire protocol, and [docs/troubleshooting.md](docs/troubleshooting.md) covers the common failures.
