@@ -49,7 +49,8 @@ static SWPSymbol *original(size_t offset, const char *name) {
     return NULL;
 }
 
-static size_t symbolSize(uintptr_t address, const uintptr_t *addresses, size_t count) {
+// device: these three helpers are __unused on a device, which skips the jumps, copies and guard.
+__unused static size_t symbolSize(uintptr_t address, const uintptr_t *addresses, size_t count) {
     for (size_t i = 0; i < count; i++)
         if (addresses[i] > address) return addresses[i] - address;
     return 0;
@@ -57,7 +58,7 @@ static size_t symbolSize(uintptr_t address, const uintptr_t *addresses, size_t c
 
 // Words in a witness table: the conformance descriptor plus one per protocol
 // requirement (TargetProtocolDescriptor.NumRequirements at offset 16).
-static size_t witnessTableWords(uintptr_t table) {
+__unused static size_t witnessTableWords(uintptr_t table) {
     const uint8_t *conformance = *(const uint8_t *const *)table;
     if (!conformance) return 0;
     int32_t offset;
@@ -67,7 +68,7 @@ static size_t witnessTableWords(uintptr_t table) {
     return protocol ? 1 + *(const uint32_t *)(protocol + 16) : 0;
 }
 
-static NSDictionary *checkLayouts(const SWPImage *patch) {
+__unused static NSDictionary *checkLayouts(const SWPImage *patch) {
     for (size_t i = 0; i < patch->descriptors.count; i++) {
         SWPSymbol *symbol = &patch->descriptors.symbols[i];
         SWPSymbol *old = original(offsetof(SWPImage, descriptors), symbol->name);
@@ -96,6 +97,13 @@ NSDictionary *SWPPatcherLoad(NSString *path) {
     size_t addressCount;
     SWPImage patch = SWPImageRead((uint32_t)index, &addresses, &addressCount);
 
+    int accessors = 0, tooSmall = 0, witnessTables = 0;
+#if TARGET_OS_SIMULATOR
+    // device: skipped on a device. A device patch is bound to the app's types by dyld (see
+    // docs/research/spikes/04-device-bind) and defines none of them, so there is nothing to jump,
+    // copy or compare, and code pages cannot be written there. The layout guard must move to the
+    // Mac for devices.
+
     // A rejected patch stays loaded but inert: nothing points at its code.
     NSDictionary *rejection = checkLayouts(&patch);
     if (rejection) {
@@ -104,7 +112,6 @@ NSDictionary *SWPPatcherLoad(NSString *path) {
     }
 
     // New -> old. This runs before any patch code can run.
-    int accessors = 0, tooSmall = 0;
     for (size_t i = 0; i < patch.accessors.count; i++) {
         SWPSymbol *symbol = &patch.accessors.symbols[i];
         SWPSymbol *old = original(offsetof(SWPImage, accessors), symbol->name);
@@ -122,7 +129,6 @@ NSDictionary *SWPPatcherLoad(NSString *path) {
     // The patch's witness tables name the patch's conformance descriptors,
     // which do not match the app's metadata. Their function entries still
     // reach the new code through chain roots.
-    int witnessTables = 0;
     for (size_t i = 0; i < patch.witnessTables.count; i++) {
         SWPSymbol *symbol = &patch.witnessTables.symbols[i];
         SWPSymbol *old = original(offsetof(SWPImage, witnessTables), symbol->name);
@@ -133,6 +139,7 @@ NSDictionary *SWPPatcherLoad(NSString *path) {
             SWPWriteWord(symbol->address + 8 * w, ((const uint64_t *)old->address)[w]);
         witnessTables++;
     }
+#endif
 
     // Old -> new: the app and every earlier patch forward to this patch.
     int replaced = 0, added = 0;

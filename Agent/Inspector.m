@@ -124,7 +124,13 @@ NSDictionary *SWPTap(NSString *query) {
 NSDictionary *SWPSnapshot(NSString *path, CGFloat scale) {
     double start = SWPNowMs();
     NSArray<UIWindow *> *windows = visibleWindows();
-    if (!windows.count) return @{@"ok" : @NO, @"error" : @"no visible window"};
+    if (!windows.count) {  // device: say why; on a phone the screen can go dark under the app
+        NSMutableArray *states = [NSMutableArray array];
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes)
+            [states addObject:@(scene.activationState)];
+        return @{@"ok" : @NO, @"error" : @"no visible window", @"sceneStates" : states,
+                 @"applicationState" : @(UIApplication.sharedApplication.applicationState)};
+    }
     CGRect bounds = windows.firstObject.screen.bounds;
     UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
     format.scale = scale;
@@ -135,7 +141,10 @@ NSDictionary *SWPSnapshot(NSString *path, CGFloat scale) {
         for (UIWindow *window in windows)
             [window drawViewHierarchyInRect:window.frame afterScreenUpdates:YES];
     }];
+    NSArray *size = @[ @(bounds.size.width * scale), @(bounds.size.height * scale) ];
+    if (!path)  // device: no path, so the PNG goes back in the reply
+        return @{@"ok" : @YES, @"png" : [png base64EncodedStringWithOptions:0], @"ms" : @(SWPNowMs() - start),
+                 @"size" : size};
     if (![png writeToFile:path atomically:YES]) return @{@"ok" : @NO, @"error" : @"cannot write the PNG file"};
-    return @{@"ok" : @YES, @"path" : path, @"ms" : @(SWPNowMs() - start),
-             @"size" : @[ @(bounds.size.width * scale), @(bounds.size.height * scale) ]};
+    return @{@"ok" : @YES, @"path" : path, @"ms" : @(SWPNowMs() - start), @"size" : size};
 }
