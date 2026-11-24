@@ -1,5 +1,5 @@
 class Swapify < Formula
-  desc "Agentic hot reload for iOS apps: patch Swift edits into the running simulator app"
+  desc "Hot reload for coding agents on iOS, in the simulator and on an iPhone"
   homepage "https://github.com/tornikegomareli/swapify"
   license "MIT"
   head "https://github.com/tornikegomareli/swapify.git", branch: "main"
