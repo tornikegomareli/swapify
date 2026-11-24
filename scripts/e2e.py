@@ -18,6 +18,7 @@ swapify = os.path.join(root, ".build", "debug", "swapify")
 list_view = os.path.join(example, "Showcase", "TaskListView.swift")
 model = os.path.join(example, "Showcase", "TaskModel.swift")
 badge = os.path.join(example, "Packages", "TaskUI", "Sources", "TaskUI", "CountBadge.swift")
+banner = os.path.join(example, "Showcase", "Banner.swift")
 originals = {path: open(path).read() for path in (list_view, model, badge)}
 failures = []
 
@@ -44,7 +45,8 @@ def check(name, condition, detail):
 
 
 def labels():
-    return [e["label"] for e in cli("ui")]
+    elements = cli("ui")  # a dict with errors when the app does not answer
+    return [e["label"] for e in elements] if isinstance(elements, list) else []
 
 
 def tap(label):
@@ -96,9 +98,36 @@ try:
     edit(badge, 'Text("\\(remaining) open")', 'Text("\\(remaining) to do")')
     result = cli("reload", badge)
     check("edit in a Swift package", result["status"] == "live" and "2 to do" in result.get("visibleText", []), result)
+
+    open(banner, "w").write("import SwiftUI\n\nstruct Banner: View {\n    let text: String\n\n"
+                            "    var body: some View { Text(text).padding().background(.mint, in: Capsule()) }\n}\n")
+    result = cli("reload", banner)
+    check("new file is live", result["status"] == "live", result)
+    edit(list_view, '            .navigationTitle("Inbox")\n',
+         '            .navigationTitle("Inbox")\n'
+         '            .safeAreaInset(edge: .top) { Banner(text: "New banner") }\n')
+    result = cli("reload", list_view)
+    check("existing file shows the new file's view",
+          result["status"] == "live" and "New banner" in result.get("visibleText", []) and banner in result.get("compiled", []),
+          result)
+
+    open(banner, "w").write("import SwiftUI\n\nstruct Banner: View {\n    let text: String\n"
+                            "    var detail = \"Two more fields\"\n    var tint = Color.orange\n\n"
+                            "    var body: some View {\n        VStack { Text(text); Text(detail) }\n"
+                            "            .padding().background(tint, in: Capsule())\n    }\n}\n")
+    result = cli("reload", banner)
+    shown = labels()
+    check("new type's stored properties change live",
+          result["status"] == "live" and "New banner" in shown and "Two more fields" in shown, {"reload": result, "ui": shown})
+
+    edit(list_view, "    let model: TaskModel\n", "    let model: TaskModel\n    let extra = 1\n")
+    result = cli("reload", list_view)
+    check("app type's stored properties still need a rebuild", result["status"] == "needsRebuild", result)
 finally:
     for path, text in originals.items():
         open(path, "w").write(text)
+    if os.path.exists(banner):
+        os.remove(banner)
 
 print(f"\n{len(failures)} failed" if failures else "\nall passed")
 sys.exit(1 if failures else 0)

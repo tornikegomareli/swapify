@@ -157,8 +157,10 @@ public final class MCPServer {
                 let build = try launcher.build(device: device)
                 let launch = try launcher.launch(udid: session.udid, deviceSet: session.deviceSet, device: device)
                 let warmup = launch.warmup.map { $0.status == .live ? "Warm-up reload passed." : $0.summary } ?? ""
+                let notInTarget = BuildReport.notInTargetMessages(build.notInTarget).map { " " + $0 }.joined()
                 return ["content": [text("Built \(URL(fileURLWithPath: build.app).lastPathComponent) in \(build.ms) ms "
-                                         + "(\(build.reloadableFiles) reloadable files) and launched it on \(launch.udid). \(warmup)")]]
+                                         + "(\(build.reloadableFiles) reloadable files) and launched it on \(launch.udid). \(warmup)"
+                                         + notInTarget)]]
             case "status":
                 let checks = Doctor(workspace: workspace).run()
                 return ["content": [text(checks.map { "\($0.status.rawValue): \($0.name): \($0.detail)" }.joined(separator: "\n"))]]

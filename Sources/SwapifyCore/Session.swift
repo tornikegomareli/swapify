@@ -22,6 +22,10 @@ public struct Session: Codable, Sendable {
     public var generation = 0
     /// Source file path -> the swift-frontend command that compiled it.
     public var commands: [String: [String]] = [:]
+    /// A file the build did not compile -> the compiled file whose command it borrows.
+    public var borrowed: [String: String] = [:]
+    /// Files reloaded since the last build, in the order of their first reload.
+    public var changed: [String] = []
 
     public init() {}
 
@@ -47,6 +51,8 @@ public struct Session: Codable, Sendable {
         token = try container.decodeIfPresent(String.self, forKey: .token)
         generation = try container.decodeIfPresent(Int.self, forKey: .generation) ?? 0
         commands = try container.decodeIfPresent([String: [String]].self, forKey: .commands) ?? [:]
+        borrowed = try container.decodeIfPresent([String: String].self, forKey: .borrowed) ?? [:]
+        changed = try container.decodeIfPresent([String].self, forKey: .changed) ?? []
     }
 }
 

@@ -70,6 +70,29 @@ public enum Shell {
         return pid
     }
 
+    /// `transform` of each item, each on its own thread, in the order of `items`.
+    /// Throws the first error, in that order.
+    static func parallelMap<Item: Sendable, Value: Sendable>(
+        _ items: [Item], _ transform: @Sendable (Item) throws -> Value
+    ) throws -> [Value] {
+        let results = Results<Value>(count: items.count)
+        DispatchQueue.concurrentPerform(iterations: items.count) { index in
+            results.set(index, Result { try transform(items[index]) })
+        }
+        return try results.values.map { try $0!.get() }
+    }
+
+    private final class Results<Value: Sendable>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage: [Result<Value, any Error>?]
+
+        init(count: Int) { storage = Array(repeating: nil, count: count) }
+
+        func set(_ index: Int, _ result: Result<Value, any Error>) { lock.withLock { storage[index] = result } }
+
+        var values: [Result<Value, any Error>?] { lock.withLock { storage } }
+    }
+
     /// Splits a command line the way a POSIX shell does: single and double
     /// quotes, and backslash escapes.
     public static func split(_ line: some StringProtocol) -> [String] {

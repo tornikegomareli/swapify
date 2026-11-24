@@ -4,16 +4,23 @@ import Foundation
 public enum FrontendCommand {
     /// Compiles only `primary` into `output`. Other primary files become plain
     /// inputs, and the build's supplementary outputs are dropped. The file keeps
-    /// its path, so `private` names keep their mangling.
+    /// its path, so `private` names keep their mangling. A new file, which the
+    /// command has as a plain input or in its file list, becomes the primary file.
     public static func patch(_ command: [String], primary: String, output: String) -> [String] {
         var result: [String] = []
+        var marked = false
         var index = 0
         while index < command.count {
             let argument = command[index]
             let value = index + 1 < command.count ? command[index + 1] : ""
             if argument == "-primary-file" {
                 result += value == primary ? [argument, value] : [value]
+                marked = marked || value == primary
                 index += 2
+            } else if argument == primary, !marked {
+                result += ["-primary-file", primary]
+                marked = true
+                index += 1
             } else if dropsValue(argument) {
                 index += 2
             } else if argument == "-frontend-parseable-output" {
@@ -23,7 +30,20 @@ public enum FrontendCommand {
                 index += 1
             }
         }
-        return result + ["-o", output]
+        return result + (marked ? [] : ["-primary-file", primary]) + ["-o", output]
+    }
+
+    /// `command` with `inputs` added as source files. A command that reads its
+    /// inputs from a `-filelist` gets a copy of that list with them, written to `list`.
+    public static func adding(_ inputs: [String], to command: [String], list: URL) throws -> [String] {
+        guard !inputs.isEmpty else { return command }
+        guard let index = command.firstIndex(of: "-filelist"), index + 1 < command.count else { return command + inputs }
+        let listed = try String(contentsOfFile: command[index + 1], encoding: .utf8)
+            .split(separator: "\n").map(String.init)
+        try (listed + inputs).map { $0 + "\n" }.joined().write(to: list, atomically: true, encoding: .utf8)
+        var result = command
+        result[index + 1] = list.path
+        return result
     }
 
     /// The patch command for a device patch: LLVM IR instead of an object, without

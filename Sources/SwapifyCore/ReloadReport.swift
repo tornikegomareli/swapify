@@ -25,6 +25,8 @@ public struct ReloadReport: Codable, Sendable {
 
     public var status: Status
     public var files: [String]
+    /// Every file the patch compiled: `files` and the other files changed since the build.
+    public var compiled: [String]?
     public var generation: Int?
     public var timings = Timings()
     public var screenshot: String?

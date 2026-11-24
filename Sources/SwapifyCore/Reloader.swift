@@ -9,9 +9,12 @@ public struct Reloader: Sendable {
         self.workspace = workspace
     }
 
-    public func reload(files: [String], snapshot: Bool = true) throws -> ReloadReport {
+    /// Reloads `files`. The patch also compiles every other file changed since the
+    /// build (see ChangedFiles.swift). Without `markChanged`, `files` do not join the
+    /// changed set: the warm-up reload of an unchanged file.
+    public func reload(files: [String], snapshot: Bool = true, markChanged: Bool = true) throws -> ReloadReport {
         let start = ContinuousClock.now
-        let session = workspace.loadSession()
+        var session = workspace.loadSession()
         let paths = files.map { URL(fileURLWithPath: $0, relativeTo: workspace.root).standardizedFileURL.path }
         var report = ReloadReport(status: .failed, files: paths)
         // A run that built for one platform and failed to launch leaves the app of
@@ -22,6 +25,11 @@ public struct Reloader: Sendable {
                              + "Run `swapify run\(builtForDevice ? " --device" : "")` again."]
             return report
         }
+        if let problem = session.recordReload(of: paths, root: workspace.root.standardizedFileURL.path, markChanged: markChanged) {
+            report.errors = [problem]
+            return report
+        }
+        try workspace.save(session)
         let agent = Agent(workspace: workspace)
 
         // dlopen returns the image it already loaded for a known path, so every
@@ -29,34 +37,30 @@ public struct Reloader: Sendable {
         let generation = session.generation + 1
         let directory = workspace.patches.appendingPathComponent("\(generation)-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let sources = try patchSources(paths, session: session, directory: directory)
+        report.compiled = sources.map(\.file)
         if session.deviceName != nil {
-            return try reloadOnDevice(paths, session: session, agent: agent.keepingConnection(), directory: directory, report: report,
-                                      snapshot: snapshot, start: start)
+            return try reloadOnDevice(sources, session: session, agent: agent.keepingConnection(), directory: directory,
+                                      report: report, snapshot: snapshot, start: start)
         }
 
-        // Compile each file with its build command, as the only primary file.
-        var objects: [String] = []
-        var command: [String] = []
-        for path in paths {
-            guard let original = session.commands[path] else {
-                report.errors = ["\(path) has no compile command. New files need `swapify run`."]
-                return report
-            }
-            command = original
-            let object = directory.appendingPathComponent(URL(fileURLWithPath: path).lastPathComponent + ".o").path
-            let result = try Shell.run(FrontendCommand.patch(original, primary: path, output: object))
-            guard result.succeeded else {
-                report.status = .compileError
-                report.errors = result.output.split(separator: "\n").filter { $0.contains("error:") }.map(String.init)
-                if report.errors.isEmpty { report.errors = [result.output] }
-                return report
-            }
-            objects.append(object)
+        // Compile each file with its build command, as the only primary file, in parallel.
+        let objects = sources.enumerated().map { index, source in
+            directory.appendingPathComponent("\(index)-\(URL(fileURLWithPath: source.file).lastPathComponent).o").path
+        }
+        let results = try Shell.parallelMap(Array(zip(sources, objects))) { source, object in
+            try Shell.run(FrontendCommand.patch(source.command, primary: source.file, output: object))
+        }
+        let failures = results.filter { !$0.succeeded }
+        guard failures.isEmpty else {
+            report.status = .compileError
+            report.errors = Self.compileErrors(failures.map(\.output))
+            return report
         }
         report.timings.compile = milliseconds(since: start)
 
         let dylib = directory.appendingPathComponent("patch.dylib").path
-        let link = try Shell.run(FrontendCommand.link(command, objects: objects, output: dylib))
+        let link = try Shell.run(FrontendCommand.link(sources[0].command, objects: objects, output: dylib))
         guard link.succeeded else {
             report.errors = ["Linking the patch failed:", link.output]
             return report
@@ -65,17 +69,34 @@ public struct Reloader: Sendable {
         return try apply(dylib, agent: agent, report: report, generation: generation, snapshot: snapshot, start: start)
     }
 
+    /// The compiles of a patch for `paths`: every file changed since the build, each
+    /// with the command that compiles it and the new files of its module as inputs.
+    func patchSources(_ paths: [String], session: Session, directory: URL) throws -> [PatchSource] {
+        try session.filesToCompile(for: paths).enumerated().map { index, file in
+            guard let (command, inputs) = session.patchCommand(for: file) else {
+                throw SwapifyError("\(file) has no compile command. Run `swapify run\(session.deviceName == nil ? "" : " --device")`.")
+            }
+            let list = directory.appendingPathComponent("\(index).SwiftFileList")
+            return PatchSource(file: file, command: try FrontendCommand.adding(inputs, to: command, list: list),
+                               isNew: session.commands[file] == nil)
+        }
+    }
+
+    /// The error lines of failed compiles, without repeats, or their whole output.
+    static func compileErrors(_ outputs: [String]) -> [String] {
+        var seen = Set<String>()
+        let errors = outputs.flatMap { $0.split(separator: "\n").filter { $0.contains("error:") }.map(String.init) }
+            .filter { seen.insert($0).inserted }
+        return errors.isEmpty ? outputs : errors
+    }
+
     /// A device patch: built and signed on the Mac (DevicePatches), then sent to the
     /// app, which cannot read the Mac's files.
-    private func reloadOnDevice(_ paths: [String], session: Session, agent: Agent, directory: URL, report: ReloadReport,
-                                snapshot: Bool, start: ContinuousClock.Instant) throws -> ReloadReport {
+    private func reloadOnDevice(_ sources: [PatchSource], session: Session, agent: Agent, directory: URL,
+                                report: ReloadReport, snapshot: Bool, start: ContinuousClock.Instant) throws -> ReloadReport {
         var report = report
         report.rebuildCommand = "swapify run --device"
-        for path in paths where session.commands[path] == nil {
-            report.errors = ["\(path) has no compile command. New files need `swapify run --device`."]
-            return report
-        }
-        switch try DevicePatches(workspace: workspace).build(files: paths, session: session, directory: directory) {
+        switch try DevicePatches(workspace: workspace).build(sources: sources, session: session, directory: directory) {
         case .compileError(let errors):
             report.status = .compileError
             report.errors = errors

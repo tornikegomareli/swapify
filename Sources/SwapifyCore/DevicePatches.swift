@@ -33,52 +33,65 @@ struct DevicePatches {
         case layoutChanged(type: String, reason: String)
     }
 
-    /// Builds one patch from the edited files, into `directory`.
-    func build(files: [String], session: Session, directory: URL) throws -> Outcome {
+    /// Builds one patch from `sources`, into `directory`. The files compile in parallel.
+    /// A new file gets no layout guard: the app has none of its types.
+    func build(sources: [PatchSource], session: Session, directory: URL) throws -> Outcome {
         let start = ContinuousClock.now
         let exports = PatchBinder.exports(fromDyldInfo: (try? String(contentsOf: workspace.exports, encoding: .utf8)) ?? "")
         guard !exports.isEmpty, let identity = session.signingIdentity else {
             throw SwapifyError("This device build has no record of the app's symbols. Run `swapify run --device`.")
         }
-        var objects: [String] = []
-        var command: [String] = []
-        var warnings: [String] = []
-        for path in files {
-            guard let original = session.commands[path] else {
-                throw SwapifyError("\(path) has no compile command. New files need `swapify run --device`.")
-            }
-            command = original
-            let stem = directory.appendingPathComponent(URL(fileURLWithPath: path).lastPathComponent).path
-            let compile = try Shell.run(FrontendCommand.patchIR(original, primary: path, output: stem + ".ll"))
-            guard compile.succeeded else {
-                let errors = compile.output.split(separator: "\n").filter { $0.contains("error:") }.map(String.init)
-                return .compileError(errors.isEmpty ? [compile.output] : errors)
-            }
-            let edited = IRModule(try String(contentsOfFile: stem + ".ll", encoding: .utf8))
-            if let before = try builtIR(path, command: original) {
-                if let change = LayoutGuard.change(from: before, to: edited) {
-                    return .layoutChanged(type: change.type, reason: change.reason)
-                }
-            } else {
-                warnings.append("The layout of \(URL(fileURLWithPath: path).lastPathComponent) was not checked: "
-                                + "its copy from the build no longer compiles.")
-            }
-            try PatchBinder.bind(edited, exports: exports).ir.write(toFile: stem + ".bound.ll", atomically: false, encoding: .utf8)
-            let usr = URL(fileURLWithPath: original[0]).deletingLastPathComponent().deletingLastPathComponent()
-            let target = original.firstIndex(of: "-target").map { original[$0 + 1] } ?? ""
-            let object = try Shell.run([usr.appendingPathComponent("bin/clang").path, "-c", "-target", target, "-O0",
-                                        stem + ".bound.ll", "-o", stem + ".o"])
-            guard object.succeeded else { throw SwapifyError("Compiling the bound patch failed:\n\(object.output)") }
-            objects.append(stem + ".o")
+        let objects = try Shell.parallelMap(Array(sources.enumerated())) { index, source in
+            try object(for: source, stem: directory.appendingPathComponent("\(index)-" + URL(fileURLWithPath: source.file).lastPathComponent).path,
+                       exports: exports)
         }
+        let errors = Reloader.compileErrors(objects.compactMap { if case .compileError(let output) = $0 { output } else { nil } })
+        if !errors.isEmpty { return .compileError(errors) }
+        for case .layoutChanged(let type, let reason) in objects { return .layoutChanged(type: type, reason: reason) }
+        let warnings = objects.compactMap { if case .built(_, let warning) = $0 { warning } else { nil } }
         let compiled = milliseconds(since: start)
 
         let dylib = directory.appendingPathComponent("patch.dylib")
-        let link = try Shell.run(FrontendCommand.link(command, objects: objects, output: dylib.path))
+        let paths = objects.compactMap { if case .built(let path, _) = $0 { path } else { nil } }
+        let link = try Shell.run(FrontendCommand.link(sources[0].command, objects: paths, output: dylib.path))
         guard link.succeeded else { throw SwapifyError("Linking the patch failed:\n\(link.output)") }
         let sign = try Shell.run(["codesign", "--force", "--sign", identity, dylib.path])
         guard sign.succeeded else { throw SwapifyError("Signing the patch failed:\n\(sign.output)") }
         return .built(dylib: dylib, compile: compiled, link: milliseconds(since: start) - compiled, warnings: warnings)
+    }
+
+    enum Object {
+        /// The object file, and a warning if its layout was not checked.
+        case built(String, warning: String?)
+        /// The compiler output.
+        case compileError(String)
+        case layoutChanged(type: String, reason: String)
+    }
+
+    /// Compiles one source to IR, checks its layout against the build, binds it to
+    /// the app's exports, and compiles the bound IR to `<stem>.o`.
+    func object(for source: PatchSource, stem: String, exports: Set<String>) throws -> Object {
+        let compile = try Shell.run(FrontendCommand.patchIR(source.command, primary: source.file, output: stem + ".ll"))
+        guard compile.succeeded else { return .compileError(compile.output) }
+        let edited = IRModule(try String(contentsOfFile: stem + ".ll", encoding: .utf8))
+        var warning: String?
+        if !source.isNew {
+            if let before = try builtIR(source.file, command: source.command) {
+                if let change = LayoutGuard.change(from: before, to: edited) {
+                    return .layoutChanged(type: change.type, reason: change.reason)
+                }
+            } else {
+                warning = "The layout of \(URL(fileURLWithPath: source.file).lastPathComponent) was not checked: "
+                    + "its copy from the build no longer compiles."
+            }
+        }
+        try PatchBinder.bind(edited, exports: exports).ir.write(toFile: stem + ".bound.ll", atomically: false, encoding: .utf8)
+        let usr = URL(fileURLWithPath: source.command[0]).deletingLastPathComponent().deletingLastPathComponent()
+        let target = source.command.firstIndex(of: "-target").map { source.command[$0 + 1] } ?? ""
+        let object = try Shell.run([usr.appendingPathComponent("bin/clang").path, "-c", "-target", target, "-O0",
+                                    stem + ".bound.ll", "-o", stem + ".o"])
+        guard object.succeeded else { throw SwapifyError("Compiling the bound patch failed:\n\(object.output)") }
+        return .built(stem + ".o", warning: warning)
     }
 
     /// The IR of `file` as it was built, compiled from its copy once per build.

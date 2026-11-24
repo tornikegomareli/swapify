@@ -119,6 +119,7 @@ extension Swapify {
             if let build {
                 print("\(Terminal.green("✓ built")) \(Terminal.bold(URL(fileURLWithPath: build.app).lastPathComponent))"
                       + Terminal.dim("  \(build.reloadableFiles) reloadable Swift files · \(build.ms / 1000) s"))
+                BuildReport.notInTargetMessages(build.notInTarget).forEach { print("  " + Terminal.yellow($0)) }
             }
             let place = launch.device.map { "on \($0)" + (launch.traced == false ? ", no debugger" : "") }
                 ?? "simulator \(launch.udid)"
@@ -246,19 +247,13 @@ extension Swapify {
 
             let message: String
             let headline: String
-            if session.commands[URL(fileURLWithPath: file).standardizedFileURL.path] == nil {
-                message = "swapify: \(URL(fileURLWithPath: file).lastPathComponent) is not part of the running app's build. "
-                    + "If it is a new app file, run `swapify run\(session.deviceName == nil ? "" : " --device")` to include it."
+            do {
+                let report = try Reloader(workspace: workspace).reload(files: [file])
+                message = report.summary
+                headline = report.status == .failed ? report.summary : report.headline
+            } catch {
+                message = "swapify: \(URL(fileURLWithPath: file).lastPathComponent) was not reloaded: \(error)"
                 headline = message
-            } else {
-                do {
-                    let report = try Reloader(workspace: workspace).reload(files: [file])
-                    message = report.summary
-                    headline = report.headline
-                } catch {
-                    message = "swapify: \(URL(fileURLWithPath: file).lastPathComponent) was not reloaded: \(error)"
-                    headline = message
-                }
             }
             // additionalContext goes to the model; systemMessage is the line the person sees.
             let reply: [String: Any] = [
