@@ -21,7 +21,10 @@ struct IRModule {
 
     init(_ source: String) {
         var lines = source.split(separator: "\n", omittingEmptySubsequences: false).map { String($0) + "\n" }
-        if source.hasSuffix("\n") { lines.removeLast() }
+        lines.removeLast()  // after the last newline: empty, or a last line without one
+        if !source.hasSuffix("\n"), let last = source.split(separator: "\n", omittingEmptySubsequences: false).last {
+            lines.append(String(last))
+        }
         var i = 0
         while i < lines.count {
             let line = lines[i]
@@ -96,7 +99,8 @@ struct IRModule {
         return i > first ? (String(decoding: bytes[first..<i], as: UTF8.self), i) : nil
     }
 
-    private static func isNameByte(_ byte: UInt8) -> Bool {
+    /// A byte of an unquoted name: `[-a-zA-Z$._0-9]`.
+    static func isNameByte(_ byte: UInt8) -> Bool {
         switch byte {
         case UInt8(ascii: "a")...UInt8(ascii: "z"), UInt8(ascii: "A")...UInt8(ascii: "Z"),
              UInt8(ascii: "0")...UInt8(ascii: "9"), UInt8(ascii: "-"), UInt8(ascii: "$"),
@@ -104,6 +108,27 @@ struct IRModule {
             return true
         default:
             return false
+        }
+    }
+
+    /// The byte offset of `needle` in `bytes` at or after `start`. `memmem` is much
+    /// faster than Foundation's and the standard library's searches on megabytes of IR.
+    static func offset(of needle: [UInt8], in bytes: [UInt8], from start: Int = 0) -> Int? {
+        guard start <= bytes.count else { return nil }
+        return bytes.withUnsafeBytes { haystack in
+            needle.withUnsafeBytes { pattern in
+                memmem(haystack.baseAddress! + start, haystack.count - start, pattern.baseAddress!, pattern.count)
+                    .map { $0 - UnsafeMutableRawPointer(mutating: haystack.baseAddress!) }
+            }
+        }
+    }
+
+    static func contains(_ text: String, _ needle: String) -> Bool {
+        var text = text
+        return text.withUTF8 { haystack in
+            Array(needle.utf8).withUnsafeBytes { pattern in
+                memmem(haystack.baseAddress!, haystack.count, pattern.baseAddress!, pattern.count) != nil
+            }
         }
     }
 
