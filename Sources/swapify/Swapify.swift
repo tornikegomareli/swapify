@@ -6,7 +6,7 @@ import SwapifyCore
 struct Swapify: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "swapify",
-        abstract: "Agentic hot reload for iOS apps: patch Swift edits into the running simulator app.",
+        abstract: "Agentic hot reload for iOS apps: patch Swift edits into the running app, in the simulator or on an iPhone.",
         discussion: """
             Start with `swapify init` in your project directory, then `swapify run`. \
             After that, `swapify reload <File.swift>` makes an edit live in about a second.
@@ -160,7 +160,7 @@ extension Swapify {
 
         func run() throws {
             let workspace = try currentWorkspace()
-            let elements = try Agent(port: workspace.loadSession().port).send("ui", as: AgentUI.self).elements ?? []
+            let elements = try Agent(workspace: workspace).send("ui", as: AgentUI.self).elements ?? []
             if output.json { return try Terminal.json(elements) }
             elements.forEach { print(MCPServer.describe($0)) }
         }
@@ -175,7 +175,7 @@ extension Swapify {
 
         func run() throws {
             let workspace = try currentWorkspace()
-            let tap = try Agent(port: workspace.loadSession().port).send("tap \(label)", as: AgentTap.self)
+            let tap = try Agent(workspace: workspace).send("tap \(label)", as: AgentTap.self)
             guard tap.ok else { throw ValidationError(tap.error ?? "The element did not respond to activation.") }
             print("\(Terminal.green("✓ tapped")) \(tap.element?.label ?? label)")
         }
@@ -184,7 +184,7 @@ extension Swapify {
     struct Screenshot: ParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Save a screenshot and print its path.")
 
-        @Flag(help: "Capture the whole simulator screen, including the status bar and system alerts.")
+        @Flag(help: "Capture the whole screen of the simulator or iPhone, including the status bar and system alerts.")
         var full = false
 
         func run() throws {
@@ -195,16 +195,21 @@ extension Swapify {
                 guard let udid = session.udid else { throw ValidationError("No simulator yet. Run `swapify run`.") }
                 try FileManager.default.createDirectory(at: workspace.screens, withIntermediateDirectories: true)
                 let url = workspace.screens.appendingPathComponent(name + ".png")
-                try Simulator(deviceSet: session.deviceSet).screenshot(on: udid, to: url)
+                if let device = Agent(session: session).device {
+                    try device.screenshot(to: url)
+                } else {
+                    try Simulator(deviceSet: session.deviceSet).screenshot(on: udid, to: url)
+                }
                 print(url.path)
             } else {
-                print(try Reloader(workspace: workspace).capture(Agent(port: session.port), name: name))
+                print(try Reloader(workspace: workspace).capture(Agent(workspace: workspace), name: name))
             }
         }
     }
 
     struct Doctor: ParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Check Xcode, the project, the build, and the running app.")
+        static let configuration = CommandConfiguration(
+            abstract: "Check Xcode, the project, the build, the simulator or iPhone, and the running app.")
 
         @OptionGroup var output: OutputOptions
 
@@ -243,7 +248,7 @@ extension Swapify {
             let headline: String
             if session.commands[URL(fileURLWithPath: file).standardizedFileURL.path] == nil {
                 message = "swapify: \(URL(fileURLWithPath: file).lastPathComponent) is not part of the running app's build. "
-                    + "If it is a new app file, run `swapify run` to include it."
+                    + "If it is a new app file, run `swapify run\(session.deviceName == nil ? "" : " --device")` to include it."
                 headline = message
             } else {
                 do {

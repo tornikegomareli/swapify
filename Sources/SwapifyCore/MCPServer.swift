@@ -9,7 +9,7 @@ public final class MCPServer {
     public static let legacyVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
 
     static let instructions = """
-        swapify patches edited Swift files into the iOS Simulator app that `run` launched, in about a second, \
+        swapify patches edited Swift files into the iOS app that `run` launched, in the simulator or on an iPhone, in about a second, \
         without a rebuild. App state stays. After you edit Swift files, call `reload` with their paths, then \
         check the returned screenshot and visible text. Use `ui` and `tap` to test behavior. If `reload` says \
         the layout changed or a file is new, call `run` to rebuild.
@@ -96,10 +96,10 @@ public final class MCPServer {
         tool("tap", "Activate the visible element with this accessibility label or identifier, then return the visible text.",
              properties: ["label": ["type": "string", "description": "Accessibility label or identifier."]],
              required: ["label"]),
-        tool("screenshot", "Capture the app. Set full to capture the whole simulator screen, including system alerts.",
-             properties: ["full": ["type": "boolean", "description": "Capture the whole simulator screen."]]),
-        tool("run", "Build the app with reload support and launch it in the simulator. Use it first, and when reload asks for a rebuild."),
-        tool("status", "Check Xcode, the project, the build, the simulator, and the running app."),
+        tool("screenshot", "Capture the app. Set full to capture the whole screen, including system alerts.",
+             properties: ["full": ["type": "boolean", "description": "Capture the whole simulator or iPhone screen."]]),
+        tool("run", "Build the app with reload support and launch it where it ran last: the simulator, or the iPhone that `swapify run --device` used. Use it first, and when reload asks for a rebuild."),
+        tool("status", "Check Xcode, the project, the build, the simulator or iPhone, and the running app."),
     ] }
 
     private static func tool(_ name: String, _ description: String, properties: [String: Any] = [:],
@@ -113,7 +113,7 @@ public final class MCPServer {
             guard let workspace = Workspace.find(from: root) else {
                 return failure("No swapify.json in \(root.path) or above. Run `swapify init` in the project directory.")
             }
-            let agent = Agent(port: workspace.loadSession().port)
+            let agent = Agent(workspace: workspace)
             switch name {
             case "reload":
                 let files = arguments["files"] as? [String] ?? []
@@ -140,7 +140,11 @@ public final class MCPServer {
                     guard let udid = session.udid else { return failure("No simulator yet. Call `run`.") }
                     let url = workspace.screens.appendingPathComponent("screen-\(Int(Date().timeIntervalSince1970)).png")
                     try FileManager.default.createDirectory(at: workspace.screens, withIntermediateDirectories: true)
-                    try Simulator(deviceSet: session.deviceSet).screenshot(on: udid, to: url)
+                    if let device = agent.device {
+                        try device.screenshot(to: url)
+                    } else {
+                        try Simulator(deviceSet: session.deviceSet).screenshot(on: udid, to: url)
+                    }
                     path = url.path
                 } else {
                     path = try Reloader(workspace: workspace).capture(agent, name: "app-\(Int(Date().timeIntervalSince1970))")
@@ -148,9 +152,10 @@ public final class MCPServer {
                 return ["content": [text(path)] + (image(path).map { [$0] } ?? [])]
             case "run":
                 let launcher = Launcher(workspace: workspace)
-                let build = try launcher.build()
-                let launch = try launcher.launch(udid: workspace.loadSession().udid,
-                                                 deviceSet: workspace.loadSession().deviceSet)
+                let session = workspace.loadSession()
+                let device = try agent.device.map { try Device.choose(Device.connected(), query: $0.udid) }
+                let build = try launcher.build(device: device)
+                let launch = try launcher.launch(udid: session.udid, deviceSet: session.deviceSet, device: device)
                 let warmup = launch.warmup.map { $0.status == .live ? "Warm-up reload passed." : $0.summary } ?? ""
                 return ["content": [text("Built \(URL(fileURLWithPath: build.app).lastPathComponent) in \(build.ms) ms "
                                          + "(\(build.reloadableFiles) reloadable files) and launched it on \(launch.udid). \(warmup)")]]

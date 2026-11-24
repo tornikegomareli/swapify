@@ -25,8 +25,8 @@ public struct Doctor: Sendable {
         checks.append(configuration(workspace))
         let session = workspace.loadSession()
         checks.append(build(session))
-        checks.append(simulator(session))
-        checks.append(agent(session))
+        checks.append(session.deviceName == nil ? simulator(session) : device(session))
+        checks.append(agent(workspace))
         return checks
     }
 
@@ -50,7 +50,8 @@ public struct Doctor: Sendable {
     private func agentDylib() -> Check {
         do {
             let url = try Resources.agent()
-            return Check(name: "Agent", status: .ok, detail: url.path)
+            _ = try Resources.agent(device: true)
+            return Check(name: "Agent", status: .ok, detail: url.deletingLastPathComponent().path + " (simulator and device)")
         } catch {
             return Check(name: "Agent", status: .failure, detail: "\(error)")
         }
@@ -84,13 +85,34 @@ public struct Doctor: Sendable {
         return Check(name: "Simulator", status: .ok, detail: "Booted: \(booted)")
     }
 
-    private func agent(_ session: Session) -> Check {
+    /// The iPhone of the last `swapify run --device`: connected, Developer Mode, unlocked.
+    private func device(_ session: Session) -> Check {
+        guard let name = session.deviceName, let udid = session.udid else {
+            return Check(name: "iPhone", status: .warning, detail: "None yet.")
+        }
+        guard let device = try? Device.connected().first(where: { $0.udid == udid }) else {
+            return Check(name: "iPhone", status: .failure, detail: "\(name) is not connected. Connect it by cable or on the same Wi-Fi.")
+        }
+        if !device.developerMode {
+            return Check(name: "iPhone", status: .failure, detail: Launcher.developerModeOff(device))
+        }
+        if (try? device.isLocked()) == true {
+            return Check(name: "iPhone", status: .warning, detail: "\(name) is locked, so the app is suspended. Unlock it.")
+        }
+        return Check(name: "iPhone", status: .ok, detail: "\(name), connected, Developer Mode on, unlocked")
+    }
+
+    private func agent(_ workspace: Workspace) -> Check {
+        let session = workspace.loadSession()
         guard session.port != 0 else {
             return Check(name: "App", status: .warning, detail: "Not launched with swapify yet.")
         }
-        guard let ping = try? Agent(port: session.port).ping() else {
-            return Check(name: "App", status: .warning,
-                         detail: "Not answering on port \(session.port). It is closed, suspended, or crashed.")
+        let ping: AgentPing
+        do {
+            ping = try Agent(workspace: workspace).ping()
+        } catch {
+            return Check(name: "App", status: .warning, detail: session.deviceName == nil
+                         ? "Not answering on port \(session.port). It is closed, suspended, or crashed." : "\(error)")
         }
         if ping.protocol != agentProtocolVersion {
             return Check(name: "App", status: .failure,
@@ -100,6 +122,7 @@ public struct Doctor: Sendable {
             return Check(name: "App", status: .warning,
                          detail: "\(ping.bundleID) runs, but this iOS version lacks the SwiftUI refresh symbols. Reloads apply; views redraw on their next update.")
         }
-        return Check(name: "App", status: .ok, detail: "\(ping.bundleID), generation \(ping.generation)")
+        let debugger = ping.traced.map { $0 ? ", a debugger is attached" : ", no debugger" } ?? ""
+        return Check(name: "App", status: .ok, detail: "\(ping.bundleID), generation \(ping.generation)\(debugger)")
     }
 }

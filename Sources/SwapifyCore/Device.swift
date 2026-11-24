@@ -97,9 +97,14 @@ public struct Device: Sendable, Equatable {
                                        environment: variables, log: console)
     }
 
-    /// A full-screen capture, including the status bar and system alerts.
+    /// A full-screen capture, including the status bar and system alerts, of the
+    /// display that is on. devicectl's default is the primary display, which on a
+    /// phone with two displays can be the dark one.
     public func screenshot(to path: URL) throws {
-        _ = try Self.devicectl(["device", "capture", "screenshot", "--device", udid, "--destination", path.path])
+        let displays = try Self.devicectl(["device", "info", "displays", "--device", udid])["displays"] as? [[String: Any]]
+        let active = displays?.first { $0["active"] as? Bool == true }?["uniqueId"] as? String
+        _ = try Self.devicectl(["device", "capture", "screenshot", "--device", udid, "--destination", path.path]
+                               + (active.map { ["--display-unique-id", $0] } ?? []))
     }
 
     /// Runs devicectl with JSON output and returns its `result` object.
