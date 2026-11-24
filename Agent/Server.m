@@ -183,4 +183,15 @@ __attribute__((constructor)) static void start(void) {
     pthread_t thread;
     pthread_create(&thread, NULL, listenLoop, NULL);
     pthread_detach(thread);
+#if !TARGET_OS_SIMULATOR
+    // device: keep the screen on while the swapify-launched app runs. A dark screen
+    // suspends the app, so reloads would fail after the Auto-Lock delay. Locking the
+    // phone by hand still works.
+    [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification
+                                                    object:nil
+                                                     queue:NSOperationQueue.mainQueue
+                                                usingBlock:^(NSNotification *note) {
+        UIApplication.sharedApplication.idleTimerDisabled = YES;
+    }];
+#endif
 }
