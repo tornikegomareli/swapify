@@ -141,19 +141,24 @@ NSDictionary *SWPPatcherLoad(NSString *path) {
     }
 #endif
 
-    // Old -> new: the app and every earlier patch forward to this patch.
+    // Old -> new: for each function the app has, the app and every earlier patch
+    // forward to this patch. A function only patches define (one of a type that is
+    // new since the build) stays as it is in earlier patches: each patch compiles
+    // every file changed since the build, so its code only meets its own copy of
+    // such a type, and an earlier patch's code only meets the earlier copy.
     int replaced = 0, added = 0;
     for (size_t i = 0; i < patch.roots.count; i++) {
         SWPSymbol *root = &patch.roots.symbols[i];
-        BOOL found = NO;
+        if (!original(offsetof(SWPImage, roots), root->name)) {
+            added++;
+            continue;
+        }
         for (int t = 0; t < imageCount; t++) {
             SWPSymbol *old = SWPSymbolTableLookup(&images[t].roots, root->name);
             if (!old) continue;
             ((void **)old->address)[0] = ((void **)root->address)[0];
-            found = YES;
             replaced++;
         }
-        if (!found) added++;
     }
 
     free(addresses);
