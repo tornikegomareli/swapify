@@ -3,7 +3,7 @@
 <h3 align="center">Hot reload for coding agents on iOS.</h3>
 
 <p align="center">
-  <img src=".github/assets/hero.png" width="100%" alt="Claude Code on the left builds a weekly activity screen; on the right the app runs on an iPhone, and a caption reads: Edit Swift file. Live in 647 ms." />
+  <img src=".github/assets/hero.png" width="100%" alt="The opening frame of the swapify launch video: a dimmed Claude Code window on a colorful desktop, under the title iOS hot reload for agents. Works on simulators and real devices." />
 </p>
 
 swapify is an open-source command-line tool for iOS projects. When a coding agent edits a Swift file, swapify compiles that file and loads it into the app that is already running, in the iOS Simulator or on an iPhone. The app keeps its screen, its navigation stack and its `@State`. The agent gets a screenshot and the visible text back, so it can check each change before it makes the next one.
