@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// What swapify knows about one running app. Stored in `.swapify/session.json`
 /// next to `swapify.json`.
@@ -8,11 +9,22 @@ public struct Session: Codable, Sendable {
     public var udid: String?
     public var deviceSet: String?
     public var port: UInt16 = 0
+    /// A device app: the CoreDevice tunnel address the agent is reached on.
+    public var host: String?
+    /// A device app: the token its agent asks for. A new random one per launch.
+    public var token: String?
     public var generation = 0
     /// Source file path -> the swift-frontend command that compiled it.
     public var commands: [String: [String]] = [:]
 
     public init() {}
+
+    /// A random 128-bit token, as 32 hex digits.
+    public static func newToken() -> String {
+        var bytes = [UInt8](repeating: 0, count: 16)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        return bytes.map { String(format: "%02x", $0) }.joined()
+    }
 
     /// Missing keys keep their defaults, so files from older versions load.
     public init(from decoder: Decoder) throws {
@@ -22,6 +34,8 @@ public struct Session: Codable, Sendable {
         udid = try container.decodeIfPresent(String.self, forKey: .udid)
         deviceSet = try container.decodeIfPresent(String.self, forKey: .deviceSet)
         port = try container.decodeIfPresent(UInt16.self, forKey: .port) ?? 0
+        host = try container.decodeIfPresent(String.self, forKey: .host)
+        token = try container.decodeIfPresent(String.self, forKey: .token)
         generation = try container.decodeIfPresent(Int.self, forKey: .generation) ?? 0
         commands = try container.decodeIfPresent([String: [String]].self, forKey: .commands) ?? [:]
     }
@@ -63,11 +77,16 @@ public struct Workspace: Sendable {
         return (try? JSONDecoder().decode(Session.self, from: data)) ?? Session()
     }
 
+    /// Writes the session readable by its owner only (mode 0600): it can hold a device token.
     public func save(_ session: Session) throws {
         try FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        try encoder.encode(session).write(to: sessionFile, options: .atomic)
+        let temporary = sessionFile.path + ".\(getpid())"
+        guard FileManager.default.createFile(atPath: temporary, contents: try encoder.encode(session),
+                                             attributes: [.posixPermissions: 0o600]),
+              rename(temporary, sessionFile.path) == 0
+        else { throw SwapifyError("Cannot write \(sessionFile.path)") }
     }
 
     public func loadConfiguration() throws -> Configuration {

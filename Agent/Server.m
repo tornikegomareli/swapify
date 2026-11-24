@@ -1,12 +1,14 @@
 #import "Agent.h"
 #include <arpa/inet.h>
+#include <poll.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <time.h>
 
-// Wire protocol: one command per line on 127.0.0.1:$SWAPIFY_PORT (on a device,
-// every interface), one JSON object per line back. See docs/protocol.md.
+// Wire protocol: one command per line on 127.0.0.1:$SWAPIFY_PORT, one JSON
+// object per line back. See docs/protocol.md. On a device the agent listens on
+// every interface, and each connection must first send `auth $SWAPIFY_TOKEN`.
 
 double SWPNowMs(void) {
     struct timespec now;
@@ -75,7 +77,54 @@ static NSDictionary *handle(NSString *line) {
     return @{@"ok" : @NO, @"error" : [@"unknown command: " stringByAppendingString:line]};
 }
 
+#if !TARGET_OS_SIMULATOR
+// device: SWAPIFY_TOKEN from the launch. Without it a device agent does not listen.
+static char *token;
+
+// The first line, read byte by byte so nothing after it is consumed, within 2 s in
+// total. A client that sends nothing, or sends slowly, cannot hold the accept loop.
+static BOOL readFirstLine(int fd, char *line, size_t size) {
+    double deadline = SWPNowMs() + 2000;
+    size_t length = 0;
+    while (length + 1 < size) {
+        int left = (int)(deadline - SWPNowMs());
+        struct pollfd ready = {.fd = fd, .events = POLLIN};
+        char byte;
+        if (left <= 0 || poll(&ready, 1, left) != 1 || read(fd, &byte, 1) != 1) return NO;
+        if (byte == '\n') break;
+        line[length++] = byte;
+    }
+    line[length] = 0;
+    return YES;
+}
+
+// Compares in time that depends only on the expected token's length.
+static BOOL isToken(const char *given) {
+    size_t length = strcspn(given, "\r"), expected = strlen(token);
+    unsigned char difference = length != expected;
+    for (size_t i = 0; i < expected; i++)
+        difference |= (unsigned char)(i < length ? given[i] : 0) ^ (unsigned char)token[i];
+    return difference == 0;
+}
+
+// device: a connection must start with `auth <token>`.
+static BOOL authorize(int client) {
+    char line[256];
+    BOOL ok = readFirstLine(client, line, sizeof line) && strncmp(line, "auth ", 5) == 0 && isToken(line + 5);
+    const char *reply = ok ? "{\"ok\":true}\n" : "{\"ok\":false,\"error\":\"not authorized\"}\n";
+    write(client, reply, strlen(reply));
+    if (!ok) SWP_LOG("refused a connection without the session token\n");
+    return ok;
+}
+#endif
+
 static void serve(int client) {
+#if !TARGET_OS_SIMULATOR
+    if (!authorize(client)) {
+        close(client);
+        return;
+    }
+#endif
     FILE *io = fdopen(client, "r+");
     char line[PATH_MAX + 64];
     while (fgets(line, sizeof line, io)) {
@@ -93,8 +142,8 @@ static void serve(int client) {
 }
 
 static void *listenLoop(void *unused) {
-    const char *value = getenv("SWAPIFY_PORT");
-    int port = value ? atoi(value) : 0;
+    const char *portValue = getenv("SWAPIFY_PORT");
+    int port = portValue ? atoi(portValue) : 0;
     int yes = 1;
 #if TARGET_OS_SIMULATOR
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -111,6 +160,12 @@ static void *listenLoop(void *unused) {
     struct sockaddr_in6 address = {.sin6_len = sizeof address, .sin6_family = AF_INET6, .sin6_port = htons(port),
                                    .sin6_addr = IN6ADDR_ANY_INIT};
     const char *where = "[::]";
+    const char *value = getenv("SWAPIFY_TOKEN");
+    if (!value || !*value) {
+        SWP_LOG("no SWAPIFY_TOKEN, so not listening\n");
+        return NULL;
+    }
+    token = strdup(value);
 #endif
     if (port <= 0 || bind(fd, (void *)&address, sizeof address) || listen(fd, 4)) {
         SWP_LOG("cannot listen on port %d (set SWAPIFY_PORT)\n", port);
