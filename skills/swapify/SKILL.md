@@ -1,11 +1,11 @@
 ---
 name: swapify
-description: Patch Swift edits into the running iOS Simulator app in about a second, without a rebuild, then check them with a screenshot, the visible text, and taps. Use when you change Swift or SwiftUI code of an iOS app that has a swapify.json, or when a swapify message appears after an edit.
+description: Patch Swift edits into the running iOS app, in the simulator or on an iPhone, in about a second, without a rebuild, then check them with a screenshot, the visible text, and taps. Use when you change Swift or SwiftUI code of an iOS app that has a swapify.json, or when a swapify message appears after an edit.
 ---
 
 # swapify
 
-swapify recompiles only the Swift files you edit and patches them into the running simulator app. App state stays: the current screen, navigation, `@State`, models, and singletons.
+swapify recompiles only the Swift files you edit and patches them into the running app, in the simulator or on an iPhone. App state stays: the current screen, navigation, `@State`, models, and singletons.
 
 ## Start
 
@@ -15,7 +15,7 @@ Run once per session, in the directory with `swapify.json`:
 swapify run
 ```
 
-It builds the app with reload support, boots a simulator if none is booted, and launches the app. If there is no `swapify.json`, run `swapify init` first.
+It builds the app with reload support, boots a simulator if none is booted, and launches the app. If there is no `swapify.json`, run `swapify init` first. To work on the connected iPhone instead, run `swapify run --device`.
 
 ## After each edit
 
@@ -23,7 +23,7 @@ The Claude Code hook reloads every Swift file you edit and reports one of these:
 
 - **Live.** The message gives a screenshot path and the visible text. Read the screenshot when the change is visual.
 - **Does not compile.** The message lists the errors. The app still runs the previous code. Fix the errors.
-- **Needs a rebuild.** The edit changed a type's layout. Run `swapify run`. App state resets.
+- **Needs a rebuild.** The edit changed a type's layout. Run the command the message names: `swapify run`, or `swapify run --device` on an iPhone. App state resets.
 - **Not part of the build.** A new file, or a file of another target. For a new app file, run `swapify run`.
 - **The app did not answer.** It crashed, or it is in the background. Run `swapify run --no-build`.
 

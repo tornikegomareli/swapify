@@ -35,3 +35,14 @@ swapify adds `-enable-implicit-dynamic` to every Swift target. If a target canno
 ## Two apps at once
 
 Each `swapify run` picks its own port, so two projects can run side by side in one simulator. Only the foreground app answers.
+
+## On an iPhone
+
+`swapify doctor` checks the iPhone of the last `swapify run --device`: connected, Developer Mode on, unlocked.
+
+- **"Doomile is locked."** iOS does not launch apps on a locked phone, and it suspends a running app when the phone locks. Unlock it. A running app keeps its state.
+- **"The app on Doomile did not answer: the phone's screen is off …"** The phone still counts as unlocked for a while after its screen goes dark, but the app is suspended. Wake the phone and bring the app to the front. Keep the screen on while you work, for example with a longer Auto-Lock time.
+- **"Developer Mode is off."** Turn it on in Settings > Privacy & Security > Developer Mode, and restart the phone.
+- **"No iPhone is connected."** Connect it by cable, or keep it on the same Wi-Fi as the Mac, and pair it once in Xcode > Window > Devices and Simulators. Answer "Trust This Computer" on the phone. Several connected devices: pick one with `swapify run --device --udid <name or UDID>`.
+- **"The project has no signing team."** A device build signs the app with the project's own settings. In Xcode, select the app target, open Signing & Capabilities, and pick a Team. With a free Apple ID, also trust the developer on the phone in Settings > General > VPN & Device Management.
+- **"The agent refused the session token."** The app was launched by an earlier `swapify run --device`. Run it again.
