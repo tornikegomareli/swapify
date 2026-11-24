@@ -1,0 +1,32 @@
+name: Bind
+options:
+  deploymentTarget:
+    iOS: "27.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: 539293JFA3
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+targets:
+  Bind:
+    type: application
+    platform: iOS
+    scheme: {}
+    sources:
+      - App
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.swapify.spike.device
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Bind
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/../App/Bind-Bridging-Header.h
+        # swapify's reload settings (Sources/SwapifyCore/Xcode.swift) plus the two export flags under test.
+        EMIT_FRONTEND_COMMAND_LINES: YES
+        COMPILATION_CACHE_ENABLE_CACHING: NO
+        ENABLE_TESTABILITY: YES
+        OTHER_SWIFT_FLAGS: $(inherited) -Xfrontend -enable-implicit-dynamic -Xfrontend -enable-private-imports
+        # One image: all app code in the main executable.
+        ENABLE_DEBUG_DYLIB: NO
