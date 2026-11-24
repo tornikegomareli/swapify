@@ -7,7 +7,10 @@ targets:
   Activity:
     type: application
     platform: iOS
-    sources: [Activity]
+    sources:
+      # A synchronized folder: a Swift file added to Activity/ is in the target.
+      - path: Activity
+        type: syncedFolder
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
