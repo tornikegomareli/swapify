@@ -2,7 +2,10 @@
 
 Usage:
     python3 -I scripts/e2e.py [--udid <UDID>] [--device-set <path>]
+    python3 -I scripts/e2e.py --device [--udid <name or UDID>]
 Without a device it uses the booted simulator, or boots the newest iPhone.
+With --device it runs on the connected iPhone, which must be unlocked; the
+generated Showcase.xcodeproj then needs a signing team.
 """
 import json
 import os
