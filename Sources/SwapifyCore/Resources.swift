@@ -12,11 +12,13 @@ public enum Resources {
             .deletingLastPathComponent().deletingLastPathComponent()
     }
 
-    public static func agent() throws -> URL {
-        let installed = prefix.appendingPathComponent("lib/swapify/SwapifyAgent.dylib")
+    /// The simulator agent, or with `device` the arm64 iOS one.
+    public static func agent(device: Bool = false) throws -> URL {
+        let name = device ? "SwapifyAgent-iphoneos.dylib" : "SwapifyAgent.dylib"
+        let installed = prefix.appendingPathComponent("lib/swapify/" + name)
         if FileManager.default.fileExists(atPath: installed.path) { return installed }
 
-        let built = sourceRoot.appendingPathComponent(".build/agent/SwapifyAgent.dylib")
+        let built = sourceRoot.appendingPathComponent(".build/agent/" + name)
         let sources = sourceRoot.appendingPathComponent("Agent")
         guard FileManager.default.fileExists(atPath: sources.path) else {
             throw SwapifyError("SwapifyAgent.dylib is missing from \(installed.deletingLastPathComponent().path). Reinstall swapify.")

@@ -12,6 +12,10 @@ public struct LaunchReport: Codable, Sendable {
     public var bundleID: String
     public var port: UInt16
     public var console: String
+    /// The device's name when the app runs on a device.
+    public var device: String?
+    /// On a device: whether a debugger is attached to the app.
+    public var traced: Bool?
     /// The first reload of a process pays a one-time dlopen cost. Launch pays
     /// it by reloading one unchanged file, which also checks the pipeline.
     public var warmup: ReloadReport?
@@ -25,7 +29,8 @@ public struct Launcher: Sendable {
         self.workspace = workspace
     }
 
-    public func build() throws -> BuildReport {
+    /// Builds for the simulator, or for `device`.
+    public func build(device: Device? = nil) throws -> BuildReport {
         let start = ContinuousClock.now
         let configuration = try workspace.loadConfiguration()
         var session = workspace.loadSession()
@@ -33,9 +38,10 @@ public struct Launcher: Sendable {
 
         let project = workspace.root.appendingPathComponent(configuration.project)
         let result = try Xcode.build(project: project, scheme: configuration.scheme,
-                                     derivedData: workspace.derivedData, log: workspace.buildLog)
+                                     derivedData: workspace.derivedData, log: workspace.buildLog, device: device?.udid)
         let log = (try? String(contentsOf: workspace.buildLog, encoding: .utf8)) ?? ""
         guard result.succeeded else {
+            if device != nil, let problem = Xcode.signingProblem(inBuildLog: log) { throw SwapifyError(problem) }
             let errors = Xcode.errors(inBuildLog: log)
             throw SwapifyError("The build failed. Full log: \(workspace.buildLog.path)\n" + errors.joined(separator: "\n"))
         }
@@ -46,7 +52,10 @@ public struct Launcher: Sendable {
             throw SwapifyError("The build was up to date, so no compile commands were captured. "
                                + "Delete \(workspace.derivedData.path) and build again.")
         }
-        let app = try Xcode.builtApp(derivedData: workspace.derivedData)
+        let app = try Xcode.builtApp(derivedData: workspace.derivedData, device: device != nil)
+        if device != nil {
+            try DevicePatches(workspace: workspace).prepare(app: app.path, files: Array(session.commands.keys))
+        }
         session.appPath = app.path.path
         session.bundleID = app.bundleID
         try workspace.save(session)
@@ -57,11 +66,20 @@ public struct Launcher: Sendable {
     /// Installs and launches the built app with the agent, then waits for its
     /// first screen. Without a device it uses the simulator of the last launch if it
     /// is still booted, then any booted simulator, and otherwise boots one.
-    public func launch(udid: String? = nil, deviceSet: String? = nil) throws -> LaunchReport {
+    /// With `device`, it installs and launches the device build on that device instead.
+    public func launch(udid: String? = nil, deviceSet: String? = nil, device: Device? = nil) throws -> LaunchReport {
+        if let device { return try launch(on: device) }
         var session = workspace.loadSession()
         guard let appPath = session.appPath, let bundleID = session.bundleID else {
             throw SwapifyError("Nothing is built yet. Run `swapify run`.")
         }
+        // The last run was on a device: stop its console, and forget the device.
+        Self.stopConsole(session.consolePID)
+        session.deviceName = nil
+        session.host = nil
+        session.token = nil
+        session.signingIdentity = nil
+        session.consolePID = nil
         let simulator = Simulator(deviceSet: deviceSet)
         let previous = deviceSet == session.deviceSet ? session.udid : nil
         let device = try udid ?? simulator.bootedDevice(preferring: previous) ?? simulator.bootNewestiPhone()
@@ -99,5 +117,80 @@ public struct Launcher: Sendable {
             report.warmup = try Reloader(workspace: workspace).reload(files: [file], snapshot: false)
         }
         return report
+    }
+
+    /// Installs the device build, signs the agent with the app's identity, copies it
+    /// into the app's `tmp/`, and launches the app with it and a new session token.
+    private func launch(on device: Device) throws -> LaunchReport {
+        var session = workspace.loadSession()
+        guard let appPath = session.appPath, let bundleID = session.bundleID, appPath.contains("-iphoneos/") else {
+            throw SwapifyError("Nothing is built for a device yet. Run `swapify run --device`.")
+        }
+        guard device.developerMode else { throw SwapifyError(Self.developerModeOff(device)) }
+        guard try !device.isLocked() else { throw SwapifyError("\(device.name) is locked. Unlock it, then run again.") }
+        Self.stopConsole(session.consolePID)
+
+        let app = URL(fileURLWithPath: appPath)
+        try device.install(app: app)
+        let identity = try DevicePatches.signingIdentity(of: app)
+        let agentPath = try device.copyToTemporaryDirectory(
+            try DevicePatches(workspace: workspace).signedAgent(identity: identity), bundleID: bundleID)
+        session.udid = device.udid
+        session.deviceSet = nil
+        session.deviceName = device.name
+        session.signingIdentity = identity
+        session.port = try Agent.freePort()
+        session.token = Session.newToken()
+        session.generation = 0
+        session.consolePID = try device.launch(
+            bundleID: bundleID,
+            environment: ["DYLD_INSERT_LIBRARIES": agentPath, "SWAPIFY_PORT": String(session.port),
+                          "SWAPIFY_TOKEN": session.token ?? ""],
+            console: workspace.consoleLog)
+        session.host = try device.tunnelAddress()
+        try workspace.save(session)
+
+        // Wait for this app's agent, then for the app to show a screen.
+        let agent = Agent(session: session)
+        let deadline = ContinuousClock.now + .seconds(40)
+        var ping: AgentPing?
+        while true {
+            if let answer = try? agent.ping(), answer.bundleID == bundleID,
+               let ui = try? agent.send("ui", as: AgentUI.self), !(ui.elements ?? []).isEmpty {
+                guard (answer.protocol ?? 0) == agentProtocolVersion else {
+                    throw SwapifyError("The agent speaks protocol \(answer.protocol ?? 0), this CLI \(agentProtocolVersion). Reinstall swapify.")
+                }
+                ping = answer
+                break
+            }
+            let console = (try? String(contentsOf: workspace.consoleLog, encoding: .utf8)) ?? ""
+            if let pid = session.consolePID, waitpid(pid, nil, WNOHANG) == pid {
+                throw SwapifyError("The app did not start on \(device.name):\n" + console.suffix(1500))
+            }
+            guard ContinuousClock.now < deadline else {
+                let locked = (try? device.isLocked()) == true
+                throw SwapifyError(locked ? "\(device.name) locked while the app started. Unlock it, then run again."
+                                   : "The app showed no screen within 40 s, or the agent did not start. See \(workspace.consoleLog.path)")
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+        var report = LaunchReport(udid: device.udid, bundleID: bundleID, port: session.port,
+                                  console: workspace.consoleLog.path)
+        report.device = device.name
+        report.traced = ping?.traced
+        return report
+    }
+
+    public static func developerModeOff(_ device: Device) -> String {
+        "Developer Mode is off on \(device.name). Turn it on in Settings > Privacy & Security > Developer Mode, "
+            + "restart the phone, then run again."
+    }
+
+    /// Stops the `devicectl` that held the previous device app's console.
+    static func stopConsole(_ pid: Int32?) {
+        guard let pid, pid > 0,
+              (try? Shell.run(["ps", "-p", String(pid), "-o", "command="]))?.output.contains("devicectl") == true
+        else { return }
+        kill(pid, SIGTERM)
     }
 }

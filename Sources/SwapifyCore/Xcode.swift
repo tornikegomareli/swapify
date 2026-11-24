@@ -14,6 +14,13 @@ public enum Xcode {
         "OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -enable-implicit-dynamic",
     ]
 
+    /// A device build also exports every declaration, `private` ones included, so a
+    /// patch can bind to the app's types instead of patching code. See
+    /// docs/architecture.md, "On a device".
+    public static let deviceReloadSettings = reloadSettings.map {
+        $0.hasPrefix("OTHER_SWIFT_FLAGS=") ? $0 + " -Xfrontend -enable-private-imports" : $0
+    }
+
     /// Xcode projects and workspaces directly in `directory`, workspaces first.
     public static func projects(in directory: URL) -> [String] {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
@@ -33,13 +40,26 @@ public enum Xcode {
         return container?["schemes"] as? [String] ?? []
     }
 
-    public static func build(project: URL, scheme: String, derivedData: URL, log: URL) throws -> ProcessResult {
+    /// Builds for the simulator, or for the device with that UDID with the project's
+    /// own signing. Like Xcode, a device build may update provisioning profiles and
+    /// register the device with the team.
+    public static func build(project: URL, scheme: String, derivedData: URL, log: URL,
+                             device: String? = nil) throws -> ProcessResult {
         let flag = project.pathExtension == "xcworkspace" ? "-workspace" : "-project"
+        let destination = device.map { ["-destination", "id=\($0)", "-allowProvisioningUpdates",
+                                         "-allowProvisioningDeviceRegistration"] + deviceReloadSettings }
+            ?? ["-destination", "generic/platform=iOS Simulator"] + reloadSettings
         return try Shell.run(
             ["xcodebuild", flag, project.path, "-scheme", scheme, "-configuration", "Debug",
-             "-destination", "generic/platform=iOS Simulator", "-derivedDataPath", derivedData.path]
-                + reloadSettings + ["build"],
+             "-derivedDataPath", derivedData.path] + destination + ["build"],
             log: log)
+    }
+
+    /// A clear message for the build failures that device builds add.
+    public static func signingProblem(inBuildLog log: String) -> String? {
+        guard log.contains("requires a development team") else { return nil }
+        return "The project has no signing team, which a device build needs. In Xcode, select the app target, "
+            + "open Signing & Capabilities, and pick a Team. Then run `swapify run --device` again."
     }
 
     /// Source path -> frontend command, for each file the build compiled. A
@@ -60,9 +80,10 @@ public enum Xcode {
         log.split(separator: "\n").filter { $0.contains("error:") }.prefix(30).map(String.init)
     }
 
-    /// The most recently built app in the simulator products directory.
-    public static func builtApp(derivedData: URL) throws -> (path: URL, bundleID: String) {
-        let products = derivedData.appendingPathComponent("Build/Products/Debug-iphonesimulator")
+    /// The most recently built app in the simulator products directory, or the device one.
+    public static func builtApp(derivedData: URL, device: Bool = false) throws -> (path: URL, bundleID: String) {
+        let products = derivedData.appendingPathComponent(device ? "Build/Products/Debug-iphoneos"
+                                                                 : "Build/Products/Debug-iphonesimulator")
         let apps = ((try? FileManager.default.contentsOfDirectory(
             at: products, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
             .filter { $0.pathExtension == "app" }

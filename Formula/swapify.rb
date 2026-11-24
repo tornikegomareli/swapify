@@ -14,6 +14,7 @@ class Swapify < Formula
   test do
     assert_match version.to_s.delete_prefix("HEAD-"), shell_output("#{bin}/swapify --version") if build.stable?
     assert_path_exists lib/"swapify/SwapifyAgent.dylib"
+    assert_path_exists lib/"swapify/SwapifyAgent-iphoneos.dylib"
     assert_match "No swapify.json", shell_output("#{bin}/swapify doctor 2>&1", 1)
   end
 end

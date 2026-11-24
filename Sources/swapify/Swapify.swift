@@ -81,9 +81,14 @@ extension Swapify {
 
     struct Run: ParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Build the app with reload support and launch it in the simulator.")
+            abstract: "Build the app with reload support and launch it in the simulator, or on an iPhone.")
 
-        @Option(help: "Simulator UDID. Default: the last run's simulator if it is booted, then a booted one, then the newest iPhone.")
+        @Flag(help: "Run on the connected iPhone instead of the simulator. No debugger is attached.")
+        var device = false
+
+        @Option(help: ArgumentHelp(
+            "Simulator UDID. Default: the last run's simulator if it is booted, then a booted one, then the newest iPhone.",
+            discussion: "With --device: the iPhone's name or UDID, when several are connected."))
         var udid: String?
 
         @Option(help: "A simctl device set, for simulators outside Simulator.app.")
@@ -98,13 +103,15 @@ extension Swapify {
             let workspace = try currentWorkspace()
             let launcher = Launcher(workspace: workspace)
             let configuration = try workspace.loadConfiguration()
+            let target = device ? try Device.choose(Device.connected(), query: udid) : nil
+            if let target, !target.developerMode { throw ValidationError(Launcher.developerModeOff(target)) }
             var build: BuildReport?
             if !noBuild {
-                Terminal.progress("Building \(configuration.scheme) (Debug, reloadable)…")
-                build = try launcher.build()
+                Terminal.progress("Building \(configuration.scheme) (Debug, reloadable\(target.map { ", for \($0.name)" } ?? ""))…")
+                build = try launcher.build(device: target)
             }
-            Terminal.progress("Launching…")
-            let launch = try launcher.launch(udid: udid, deviceSet: deviceSet)
+            Terminal.progress(target.map { "Installing and launching on \($0.name)…" } ?? "Launching…")
+            let launch = try launcher.launch(udid: device ? nil : udid, deviceSet: deviceSet, device: target)
             if output.json {
                 struct RunReport: Encodable { var build: BuildReport?; var launch: LaunchReport }
                 return try Terminal.json(RunReport(build: build, launch: launch))
@@ -113,8 +120,10 @@ extension Swapify {
                 print("\(Terminal.green("✓ built")) \(Terminal.bold(URL(fileURLWithPath: build.app).lastPathComponent))"
                       + Terminal.dim("  \(build.reloadableFiles) reloadable Swift files · \(build.ms / 1000) s"))
             }
+            let place = launch.device.map { "on \($0)" + (launch.traced == false ? ", no debugger" : "") }
+                ?? "simulator \(launch.udid)"
             print("\(Terminal.green("✓ running")) \(Terminal.bold(launch.bundleID))"
-                  + Terminal.dim("  simulator \(launch.udid) · agent port \(launch.port)"))
+                  + Terminal.dim("  \(place) · agent port \(launch.port)"))
             if let warmup = launch.warmup {
                 print(warmup.status == .live
                       ? Terminal.dim("  warm-up reload passed in \(warmup.timings.total) ms")
