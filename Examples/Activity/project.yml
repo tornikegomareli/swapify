@@ -1,0 +1,16 @@
+name: Activity
+options:
+  bundleIdPrefix: dev.swapify
+  deploymentTarget:
+    iOS: "27.0"
+targets:
+  Activity:
+    type: application
+    platform: iOS
+    sources: [Activity]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.swapify.activity
+        SWIFT_VERSION: "6.0"
