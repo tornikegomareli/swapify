@@ -36,6 +36,15 @@ public struct AgentRefresh: Decodable, Sendable {
 public struct AgentSnapshot: Decodable, Sendable {
     public var ok: Bool
     public var path: String?
+    /// The PNG, base64, when the command had no path (a device app).
+    public var png: String?
+    public var error: String?
+}
+
+/// The reply to `put`: where the agent stored the bytes.
+public struct AgentPut: Decodable, Sendable {
+    public var ok: Bool
+    public var path: String?
     public var error: String?
 }
 
@@ -69,6 +78,10 @@ public struct Agent: Sendable {
     public var host: String?
     /// The session token a device agent asks for first.
     public var token: String?
+    /// The device the app runs on, to explain a failure and to find a new tunnel address.
+    public var device: Device?
+    /// Where a new tunnel address is saved.
+    public var workspace: Workspace?
 
     public init(port: UInt16, host: String? = nil, token: String? = nil) {
         self.port = port
@@ -78,6 +91,15 @@ public struct Agent: Sendable {
 
     public init(session: Session) {
         self.init(port: session.port, host: session.host, token: session.token)
+        if let name = session.deviceName, let udid = session.udid {
+            device = Device(udid: udid, name: name, developerMode: true)
+        }
+    }
+
+    /// The agent of the app that the workspace's session launched.
+    public init(workspace: Workspace) {
+        self.init(session: workspace.loadSession())
+        self.workspace = workspace
     }
 
     public func send<Reply: Decodable>(_ command: String, payload: Data = Data(), as reply: Reply.Type) throws -> Reply {
@@ -93,25 +115,98 @@ public struct Agent: Sendable {
 
     /// Sends one command line, then `payload` as raw bytes, and returns the reply line.
     public func sendRaw(_ command: String, payload: Data = Data()) throws -> String {
-        let fd = try connectSocket()
-        defer { close(fd) }
+        guard let device else { return try exchange(command, payload: payload) }
+        do {
+            return try exchange(command, payload: payload)
+        } catch let error as Unreachable {
+            // The CoreDevice tunnel can come back with a new address: read it again once.
+            guard let address = try? device.tunnelAddress(), address != host else { throw explain(device, error) }
+            if let workspace {
+                var session = workspace.loadSession()
+                session.host = address
+                try? workspace.save(session)
+            }
+            var retry = self
+            retry.host = address
+            do { return try retry.exchange(command, payload: payload) } catch { throw explain(device, error) }
+        } catch {
+            throw explain(device, error)
+        }
+    }
+
+    /// A device app did not answer: say whether the phone is locked.
+    private func explain(_ device: Device, _ error: Error) -> Error {
+        if error is SwapifyError, "\(error)".contains("refused the session token") { return error }
+        if (try? device.isLocked()) == true {
+            return SwapifyError("\(device.name) is locked, so the app is suspended. Unlock it and try again; the app keeps its state.")
+        }
+        return SwapifyError("The app on \(device.name) did not answer: the phone's screen is off, or the app is in "
+                            + "the background or stopped. Wake the phone and bring the app to the front, or run `swapify run --device`.")
+    }
+
+    private struct Unreachable: Error {}
+
+    /// One connection for several commands. On a device, each new connection costs a
+    /// tunnel round trip and `auth`, about 90 ms; a reload sends five commands.
+    public func keepingConnection() -> Agent {
+        var agent = self
+        agent.kept = Kept()
+        return agent
+    }
+
+    private final class Kept: @unchecked Sendable {
+        var connection: Connection?
+    }
+
+    private var kept: Kept?
+
+    private func exchange(_ command: String, payload: Data) throws -> String {
+        guard let kept else { return try open().request(command, payload: payload) }
+        if let connection = kept.connection, let reply = try? connection.request(command, payload: payload) {
+            return reply
+        }
+        kept.connection = try open()
+        return try kept.connection!.request(command, payload: payload)
+    }
+
+    /// Connects, and on a device sends `auth`.
+    private func open() throws -> Connection {
+        let fd: Int32
+        do { fd = try connectSocket() } catch { throw host == nil ? error : Unreachable() }
+        let connection = Connection(fd: fd)
         // A suspended app (in the background, or stopped in a debugger) never answers.
         var timeout = timeval(tv_sec: 10, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-
-        var reader = LineReader(fd: fd)
         if let token {
             try writeAll(fd, Data("auth \(token)\n".utf8))
-            guard (try? reader.line())?.contains(#""ok":true"#) == true else {
+            guard let reply = try? connection.reader.line() else { throw SwapifyError("The app did not answer.") }
+            guard reply.contains(#""ok":true"#) else {
                 throw SwapifyError("The agent refused the session token. Run `swapify run --device` again.")
             }
         }
-        try writeAll(fd, Data((command + "\n").utf8) + payload)
-        guard let reply = try? reader.line(), !reply.isEmpty else {
-            throw SwapifyError(
-                "The app did not answer. It crashed, or it is suspended: in the background or stopped in the debugger.")
+        return connection
+    }
+
+    /// An open connection: lines out, lines back.
+    private final class Connection {
+        let fd: Int32
+        var reader: LineReader
+
+        init(fd: Int32) {
+            self.fd = fd
+            reader = LineReader(fd: fd)
         }
-        return reply
+
+        deinit { close(fd) }
+
+        func request(_ command: String, payload: Data) throws -> String {
+            try writeAll(fd, Data((command + "\n").utf8) + payload)
+            guard let reply = try? reader.line(), !reply.isEmpty else {
+                throw SwapifyError(
+                    "The app did not answer. It crashed, or it is suspended: in the background or stopped in the debugger.")
+            }
+            return reply
+        }
     }
 
     private func connectSocket() throws -> Int32 {
@@ -159,17 +254,6 @@ public struct Agent: Sendable {
         return fd
     }
 
-    private func writeAll(_ fd: Int32, _ data: Data) throws {
-        try data.withUnsafeBytes { buffer in
-            var sent = 0
-            while sent < buffer.count {
-                let n = write(fd, buffer.baseAddress! + sent, buffer.count - sent)
-                guard n > 0 else { throw SwapifyError("Cannot write to the agent") }
-                sent += n
-            }
-        }
-    }
-
     /// A TCP port on 127.0.0.1 that is free now. Simulator apps share the
     /// host's network stack, so the app can listen on it.
     public static func freePort() throws -> UInt16 {
@@ -186,6 +270,17 @@ public struct Agent: Sendable {
         }
         guard bound else { throw SwapifyError("No free TCP port on 127.0.0.1") }
         return UInt16(bigEndian: address.sin_port)
+    }
+}
+
+private func writeAll(_ fd: Int32, _ data: Data) throws {
+    try data.withUnsafeBytes { buffer in
+        var sent = 0
+        while sent < buffer.count {
+            let n = write(fd, buffer.baseAddress! + sent, buffer.count - sent)
+            guard n > 0 else { throw SwapifyError("Cannot write to the agent") }
+            sent += n
+        }
     }
 }
 

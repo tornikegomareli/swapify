@@ -26,6 +26,19 @@ public enum FrontendCommand {
         return result + ["-o", output]
     }
 
+    /// The patch command for a device patch: LLVM IR instead of an object, without
+    /// debug info, which would name definitions the binder drops. With `source`,
+    /// that file is compiled in place of `primary`: the copy of the file as it was
+    /// built, which the layout guard compares with the edit.
+    public static func patchIR(_ command: [String], primary: String, source: String? = nil, output: String) -> [String] {
+        patch(command, primary: primary, output: output).compactMap { argument in
+            if argument == "-c" { return "-emit-ir" }
+            if argument == primary, let source { return source }
+            let debug = argument == "-g" || argument.hasPrefix("-debug-info-format") || argument.hasPrefix("-dwarf-version")
+            return debug ? nil : argument
+        }
+    }
+
     private static func dropsValue(_ argument: String) -> Bool {
         ["-o", "-supplementary-output-file-map", "-serialize-diagnostics-path", "-index-store-path",
          "-index-unit-output-path"].contains(argument)
@@ -42,9 +55,10 @@ public enum FrontendCommand {
         // command[0] is <toolchain>/usr/bin/swift-frontend.
         let usr = URL(fileURLWithPath: command[0]).deletingLastPathComponent().deletingLastPathComponent()
         let sdk = value("-sdk")
+        let platform = value("-target").hasSuffix("-simulator") ? "iphonesimulator" : "iphoneos"
         return [usr.appendingPathComponent("bin/clang").path, "-target", value("-target"),
                 "-isysroot", sdk, "-dynamiclib"] + objects
             + ["-o", output, "-undefined", "dynamic_lookup", "-Wl,-w",
-               "-L\(sdk)/usr/lib/swift", "-L\(usr.path)/lib/swift/iphonesimulator"]
+               "-L\(sdk)/usr/lib/swift", "-L\(usr.path)/lib/swift/\(platform)"]
     }
 }

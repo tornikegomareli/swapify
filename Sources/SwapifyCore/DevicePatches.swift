@@ -24,6 +24,75 @@ struct DevicePatches {
         }
     }
 
+    enum Outcome {
+        /// The signed patch, with milliseconds to compile (IR, guard, binding, objects)
+        /// and to link and sign it.
+        case built(dylib: URL, compile: Int, link: Int, warnings: [String])
+        case compileError([String])
+        /// The layout guard refused: `type` is the `$s…Mn` symbol.
+        case layoutChanged(type: String, reason: String)
+    }
+
+    /// Builds one patch from the edited files, into `directory`.
+    func build(files: [String], session: Session, directory: URL) throws -> Outcome {
+        let start = ContinuousClock.now
+        let exports = PatchBinder.exports(fromDyldInfo: (try? String(contentsOf: workspace.exports, encoding: .utf8)) ?? "")
+        guard !exports.isEmpty, let identity = session.signingIdentity else {
+            throw SwapifyError("This device build has no record of the app's symbols. Run `swapify run --device`.")
+        }
+        var objects: [String] = []
+        var command: [String] = []
+        var warnings: [String] = []
+        for path in files {
+            guard let original = session.commands[path] else {
+                throw SwapifyError("\(path) has no compile command. New files need `swapify run --device`.")
+            }
+            command = original
+            let stem = directory.appendingPathComponent(URL(fileURLWithPath: path).lastPathComponent).path
+            let compile = try Shell.run(FrontendCommand.patchIR(original, primary: path, output: stem + ".ll"))
+            guard compile.succeeded else {
+                let errors = compile.output.split(separator: "\n").filter { $0.contains("error:") }.map(String.init)
+                return .compileError(errors.isEmpty ? [compile.output] : errors)
+            }
+            let edited = IRModule(try String(contentsOfFile: stem + ".ll", encoding: .utf8))
+            if let before = try builtIR(path, command: original) {
+                if let change = LayoutGuard.change(from: before, to: edited) {
+                    return .layoutChanged(type: change.type, reason: change.reason)
+                }
+            } else {
+                warnings.append("The layout of \(URL(fileURLWithPath: path).lastPathComponent) was not checked: "
+                                + "its copy from the build no longer compiles.")
+            }
+            try PatchBinder.bind(edited, exports: exports).ir.write(toFile: stem + ".bound.ll", atomically: false, encoding: .utf8)
+            let usr = URL(fileURLWithPath: original[0]).deletingLastPathComponent().deletingLastPathComponent()
+            let target = original.firstIndex(of: "-target").map { original[$0 + 1] } ?? ""
+            let object = try Shell.run([usr.appendingPathComponent("bin/clang").path, "-c", "-target", target, "-O0",
+                                        stem + ".bound.ll", "-o", stem + ".o"])
+            guard object.succeeded else { throw SwapifyError("Compiling the bound patch failed:\n\(object.output)") }
+            objects.append(stem + ".o")
+        }
+        let compiled = milliseconds(since: start)
+
+        let dylib = directory.appendingPathComponent("patch.dylib")
+        let link = try Shell.run(FrontendCommand.link(command, objects: objects, output: dylib.path))
+        guard link.succeeded else { throw SwapifyError("Linking the patch failed:\n\(link.output)") }
+        let sign = try Shell.run(["codesign", "--force", "--sign", identity, dylib.path])
+        guard sign.succeeded else { throw SwapifyError("Signing the patch failed:\n\(sign.output)") }
+        return .built(dylib: dylib, compile: compiled, link: milliseconds(since: start) - compiled, warnings: warnings)
+    }
+
+    /// The IR of `file` as it was built, compiled from its copy once per build.
+    private func builtIR(_ file: String, command: [String]) throws -> IRModule? {
+        let copy = original(of: file)
+        let ir = copy.path + ".ll"
+        if !FileManager.default.fileExists(atPath: ir) {
+            guard FileManager.default.fileExists(atPath: copy.path),
+                  try Shell.run(FrontendCommand.patchIR(command, primary: file, source: copy.path, output: ir)).succeeded
+            else { return nil }
+        }
+        return IRModule(try String(contentsOfFile: ir, encoding: .utf8))
+    }
+
     /// The copy of `file` as it was built. It keeps the file name, which private
     /// symbol names depend on.
     func original(of file: String) -> URL {

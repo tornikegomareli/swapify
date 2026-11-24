@@ -41,7 +41,10 @@ enum PatchBinder {
     }
 
     static func bind(_ source: String, exports: Set<String>) throws -> Result {
-        let module = IRModule(source)
+        try bind(IRModule(source), exports: exports)
+    }
+
+    static func bind(_ module: IRModule, exports: Set<String>) throws -> Result {
         var imported = Set<String>()
         for entity in module.entities {
             guard let name = entity.name, exports.contains(name) else { continue }
