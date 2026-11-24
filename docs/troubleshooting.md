@@ -26,7 +26,7 @@ The edit added, removed, renamed, or retyped a stored property, or added or remo
 
 ## A reload is slow
 
-Its time is the compile time of the edited file. Large files with many macros, such as TCA reducers, take longer to type-check. Splitting views into smaller files makes reloads faster.
+Its time is the compile time of the slowest file changed since the last build: each reload compiles all of them, in parallel. Large files with many macros, such as TCA reducers, take longer to type-check. Splitting views into smaller files makes reloads faster.
 
 ## The build fails only with swapify
 

@@ -11,4 +11,5 @@ First release.
 - Claude Code hook and skill, and a dual-era MCP server (2026-07-28 and earlier `initialize`-based versions).
 - Homebrew formula and `make install`.
 - Apple silicon, Xcode 26 or later, iOS 26 or later simulators.
+- New Swift files reload without a rebuild. A new file borrows the build command of the nearest file the build compiled, and every patch compiles all files changed since the last build, in parallel, so types created since the build may change their stored properties. A build that still does not compile a reloaded new file names it: it is not in the target.
 - `swapify run --device`: the same loop on a connected iPhone, with no debugger. Patches bind to the app's types through dyld instead of jumps, the layout guard runs on the Mac, and the agent accepts only connections with the session token, over the CoreDevice tunnel. `reload`, `ui`, `tap`, `screenshot` (`--full` too), `doctor`, `mcp`, and the hook work against it.

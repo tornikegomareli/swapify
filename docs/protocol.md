@@ -48,7 +48,7 @@ load /path/to/.swapify/patches/4-1A2B3C4D/patch.dylib
 | Field | Meaning |
 |---|---|
 | `replaced` | Chain roots in the app and earlier patches that now forward to this patch |
-| `added` | Chain roots with no old counterpart: new functions |
+| `added` | Chain roots of functions the app does not have: new functions, and functions of types that are new since the build |
 | `sharedAccessors` | Patch accessors and addressors that now jump to the app's |
 | `sharedWitnessTables` | Witness tables copied from the app |
 | `tooSmall` | Accessors shorter than the 16-byte jump; they were left alone |

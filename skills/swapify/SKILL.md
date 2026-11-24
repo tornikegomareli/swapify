@@ -24,7 +24,7 @@ The Claude Code hook reloads every Swift file you edit and reports one of these:
 - **Live.** The message gives a screenshot path and the visible text. Read the screenshot when the change is visual.
 - **Does not compile.** The message lists the errors. The app still runs the previous code. Fix the errors.
 - **Needs a rebuild.** The edit changed a type's layout. Run the command the message names: `swapify run`, or `swapify run --device` on an iPhone. App state resets.
-- **Not part of the build.** A new file, or a file of another target. For a new app file, run `swapify run`.
+- **Not part of the build.** The file is not in the app, and neither its folder nor a folder above it has an app file. A new file next to app files reloads like any other file.
 - **The app did not answer.** It crashed, or it is in the background. Run `swapify run --no-build`.
 
 Without the hook, call `swapify reload <File.swift>...`, or the `reload` MCP tool. Both return the same result.
@@ -39,9 +39,9 @@ The MCP tools `ui`, `tap`, and `screenshot` do the same, and `tap` returns the v
 
 ## What needs a rebuild
 
-- Adding, removing, renaming, or retyping a stored property.
+- Adding, removing, renaming, or retyping a stored property of a type that existed at the last build. Types you created since then may change.
 - Adding or removing a method of a non-final class.
-- A new or deleted file.
+- A deleted file.
 - Resources, `Info.plist`, entitlements, or package dependencies.
 
 These reload, but objects that exist keep their old values:
@@ -49,4 +49,4 @@ These reload, but objects that exist keep their old values:
 - The initial value of a stored property or a `static let`.
 - Code that ran once at launch, such as `App.init`.
 
-A reload takes as long as compiling that one file. A large file with many macros can take several seconds.
+Each reload compiles every file changed since the last build, in parallel. A large file with many macros can take several seconds.

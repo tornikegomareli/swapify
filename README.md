@@ -10,7 +10,7 @@
   <img src=".github/assets/film.png" width="100%" alt="Claude Code in a terminal on the left, its last edit ending with the line 'swapify: TodayView.swift live in 908 ms'; on the right the Habits app on an iPhone, redesigned into cards, next to a label reading Live in 908 ms, state kept" />
 </p>
 
-swapify patches Swift edits into an iOS app that is already running, in the simulator or on an iPhone. Only the edited file is recompiled. The app keeps its screen, its navigation stack, `@State`, and its data. The agent gets a screenshot and the visible text back, so it can check what it did before it does the next thing.
+swapify patches Swift edits into an iOS app that is already running, in the simulator or on an iPhone. Only the files changed since the last build are recompiled. The app keeps its screen, its navigation stack, `@State`, and its data. The agent gets a screenshot and the visible text back, so it can check what it did before it does the next thing.
 
 A one-line edit to a view in a 979-file TCA app: 10.2 s to rebuild and relaunch, back at the first screen. 1.2 s with swapify, on the same screen.
 
@@ -96,10 +96,12 @@ Your Xcode project does not change. `swapify run` passes the settings it needs o
 | Bodies of functions, methods, initializers, computed properties | Live |
 | SwiftUI view structure and modifiers | Live, `@State` kept |
 | New functions, new types, `private` helpers | Live |
+| A new Swift file in a folder with app files, or below one | Live |
+| Stored properties of a type created since the last build | Live |
 | Files in Swift packages that the app builds | Live |
-| A stored property added, removed, renamed, or retyped | Rebuild |
+| A stored property of a type the app was built with: added, removed, renamed, or retyped | Rebuild |
 | A method added to or removed from a non-final class | Rebuild |
-| A new file, resources, `Info.plist`, dependencies | Rebuild |
+| A deleted file, resources, `Info.plist`, dependencies | Rebuild |
 
 ## On an iPhone
 
@@ -160,7 +162,7 @@ A warm reload of a SwiftUI view file:
 | Snapshot and visible text | 53 |
 | Edit to verified screen | 512 |
 
-A reload costs what compiling that one file costs. A 495-line TCA reducer takes 9.6 s to type-check by itself; a view file takes a fraction of a second. The first patch in a process pays about 800 ms for `dlopen`, so `swapify run` reloads one unchanged file right after launch.
+A reload costs what compiling the files changed since the build costs. They compile in parallel, so on a 14-core Mac a patch of 6 small files takes as long as a patch of 1. A 495-line TCA reducer takes 9.6 s to type-check by itself; a view file takes a fraction of a second. The first patch in a process pays about 800 ms for `dlopen`, so `swapify run` reloads one unchanged file right after launch.
 
 ## Limits
 

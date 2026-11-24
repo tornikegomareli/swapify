@@ -1,6 +1,6 @@
 # Architecture
 
-swapify makes an edit to one Swift file live in a running iOS Simulator app. This document describes each step and the Swift ABI structures it touches. Symbol names, offsets, and measurements are from Xcode 27.2, Swift 6.4, and the iOS 27.2 simulator on Apple silicon.
+swapify makes Swift edits live in a running iOS Simulator app. This document describes each step and the Swift ABI structures it touches. Symbol names, offsets, and measurements are from Xcode 27.2, Swift 6.4, and the iOS 27.2 simulator on Apple silicon.
 
 ```text
  host (swapify CLI / MCP server)                         simulator app process
@@ -56,13 +56,13 @@ The cost is one runtime call per function call: 7% in a call-heavy micro benchma
 
 ## 2. Patch build
 
-`swapify reload File.swift` rewrites the build's own frontend command for that file (`FrontendCommand.patch`):
+`swapify reload File.swift` compiles every file changed since the last build: the files reloaded since then and the new files (section 11). Each compile rewrites the build's own frontend command for its file (`FrontendCommand.patch`), and they run in parallel:
 
-- The edited file stays the only `-primary-file`. Other primary files of the same batch job become plain inputs.
+- The file stays the only `-primary-file`. Other primary files of the same batch job become plain inputs.
 - `-o`, `-emit-*-path`, `-serialize-diagnostics-path`, `-index-*`, and the supplementary output file map are dropped, and a new `-o` is added.
 - The file keeps its path. The mangled name of a `private` declaration contains a discriminator derived from the file name, so the patch's `private` symbols match the app's.
 
-The object is linked with the clang next to `swift-frontend`, as `-dynamiclib -undefined dynamic_lookup`. References to the rest of the app stay undefined and bind to the running process at `dlopen`. The linker signs the dylib ad hoc, which the simulator accepts. Every attempt gets a new directory, because `dlopen` of a path that is already loaded returns the old image.
+The objects are linked into one dylib with the clang next to `swift-frontend`, as `-dynamiclib -undefined dynamic_lookup`. References to the rest of the app stay undefined and bind to the running process at `dlopen`. The linker signs the dylib ad hoc, which the simulator accepts. Every attempt gets a new directory, because `dlopen` of a path that is already loaded returns the old image.
 
 Measured on a SwiftUI view file: compile 230 ms, link 210 ms.
 
@@ -77,7 +77,7 @@ On `load <path>` the agent runs `dlopen`, then sections 4 to 6 in order, before 
 
 ## 4. Old callers run new code
 
-For each chain root `$s…TX` in the patch, the agent finds the root with the same name in the app and in every earlier patch, and copies the patch root's `implementationFunction` into it. From then on, every entry into the old function forwards to the new body:
+For each chain root `$s…TX` in the patch whose function the app has, the agent finds the root with the same name in the app and in every earlier patch, and copies the patch root's `implementationFunction` into it. From then on, every entry into the old function forwards to the new body:
 
 - direct calls and calls through the GOT;
 - class vtable dispatch, because the vtable points at the old function, whose prologue forwards;
@@ -85,6 +85,8 @@ For each chain root `$s…TX` in the patch, the agent finds the root with the sa
 - `private` functions, because their roots are in the symbol table.
 
 The new function reads its own root, which still points at itself, so it runs its body. A second patch updates the app's roots and the first patch's roots.
+
+A function that only patches define, one of a type that is new since the build, is not forwarded: each patch keeps its own copy (section 11).
 
 ## 5. New code keeps old types
 
@@ -166,3 +168,23 @@ Warm reload of a SwiftUI view file on an M-series Mac with Xcode 27.2:
 **The layout guard runs on the Mac.** A bound patch has no type descriptors of its own, so the agent cannot compare layouts. Before anything is sent, `LayoutGuard` compares the IR of the file as it was built (compiled once from its copy) with the IR of the edit: for each type both define, the field records (name, `let` or `var`, type) and the type descriptor, which holds a class's vtable. It gives the same `needsRebuild` report as the agent on the simulator.
 
 **The connection.** The agent listens on every interface of the device, and the CLI connects to the device's CoreDevice tunnel address, an encrypted link over the cable or the network, never the Wi-Fi address. Every connection must first send `auth <token>` within 2 s. The token is 128 random bits per launch, kept in `.swapify/session.json` with mode 0600. The CLI reads the tunnel address at launch, and reads it again once if a connection fails. A device app answers only while it is in the foreground and the phone's screen is on, so the device agent keeps the screen on while the swapify-launched app runs (`idleTimerDisabled`); locking the phone by hand still works.
+
+## 11. New files
+
+A Swift file that the build did not compile has no frontend command of its own. On its first reload it borrows the command of the nearest file that the build compiled: a file in the same folder, else in the nearest parent folder, up to the directory with `swapify.json`. `.swapify/session.json` keeps the record (`borrowed`). The new file is added to that command's inputs and compiled as the primary file. A command with a `-filelist` gets a copy of the list with the new file in the patch directory, because the frontend refuses file inputs next to a file list. From then on, every patch compile in that module gets the module's new files as inputs, so the files the build compiled can use the new types.
+
+The app has none of a new file's types, so they need different rules from the app's own types:
+
+- **The changed set.** Every patch compiles every file changed since the last build: each file reloaded since then (`changed`), and each new file. A type that is new since the build can only be used by these files, so the code that creates such a type and the code that reads it always come from the same patch, and they agree on its layout. Its stored properties may change from one patch to the next.
+- **No jumps, no forwarding, no guard.** The agent finds no metadata accessor, field offset, or witness table of such a type in the app, so section 5 leaves the patch's own copy alone. Section 4 does not forward an earlier patch's copy of its functions to the new patch. Forwarding ran new code on values that an earlier patch had laid out, which showed wrong values or crashed. The layout guard compares only types the app has.
+- **On a device**, a new file has no copy in `.swapify/originals/`, so the Mac's layout guard skips it. The bound patch keeps the new types' definitions, because the app does not export them.
+
+`swapify run` builds the project again and clears the changed set. A synchronized folder adds the new files to the target, and they get commands of their own. With classic groups the build does not compile a new file, and `swapify run` prints `X.swift is not in the target; add it in Xcode.` swapify does not edit the project.
+
+Measured with Examples/Showcase on a 14-core Apple silicon Mac: a reload of `TaskListView.swift`, with small new view files in the changed set. Each value is the median of 5 reloads, from two runs.
+
+| Changed files | Edit to verified screen |
+|---|---|
+| 1 | 494 and 510 ms |
+| 3 | 437 and 449 ms |
+| 6 | 445 and 448 ms |
