@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.1 (unreleased)
+
+### Fixed
+
+- On an iPhone, a reload of a file that uses a type created since the build failed with `symbol not found in flat namespace`. The files of one patch are now bound together, so the patch keeps the new type's metadata.
+- A build kept the compile commands of deleted files. A file created again with the same name then compiled with an old command, maybe one for the other platform. Each build now drops them, and such a file borrows a fresh command.
+
+### Added
+
+- `swapify watch` reloads Swift files when you save them, for hand edits, for example in Xcode. Start it after `swapify run` or `swapify run --device`; it runs until Ctrl-C. It prints one line for each reload, and `--json` prints each result as one line of JSON.
+- The README, the agent docs and the skill say that a changed `static let` or global constant keeps its old value, and that a computed property reloads.
+
 ## 0.1.0 (2026-11-25)
 
 The first release: hot reload for coding agents on iOS, in the simulator and on an iPhone.
