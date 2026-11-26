@@ -101,8 +101,10 @@ swapify doctor             # checks the Mac, Xcode, the project, the build, the 
 | Stored properties of a type created since the last build | Live |
 | Files in Swift packages that the app builds | Live |
 | The initial value of a `static let` or a global constant, changed | Keeps the old value: the app computes it once, with the code it was built with, the first time it is read. A computed property (`static var x: T { … }`) is live |
-| A stored property of a type the app was built with: added, removed, renamed, or retyped | Rebuild |
-| A method added to or removed from a non-final class | Rebuild |
+| A stored property with an initial value, added to a class the app was built with (final or not, `@Observable` too), in the simulator | Live. Existing objects keep their layout, and the property lives beside each object until the next build |
+| A method added to or removed from a non-final class, in the simulator | Live. Code that the patch does not compile keeps calling a removed method's old body |
+| Any other change to the stored properties of a type the app was built with: a struct's or an enum's, one removed, renamed or retyped, a `@Published` one, or any on an iPhone | Rebuild |
+| A method added to or removed from a non-final class on an iPhone | Rebuild |
 | A deleted file, resources, `Info.plist`, dependencies | Rebuild |
 
 ## How it works

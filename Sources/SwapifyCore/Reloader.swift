@@ -66,7 +66,81 @@ public struct Reloader: Sendable {
             return report
         }
         report.timings.link = milliseconds(since: start) - report.timings.compile
-        return try apply(dylib, agent: agent, report: report, generation: generation, snapshot: snapshot, start: start)
+        let applied = try apply(dylib, agent: agent, report: report, generation: generation, snapshot: snapshot, start: start)
+        guard applied.status == .needsRebuild, applied.changedType != nil else { return applied }
+        return try reloadWithSideFields(sources, session: session, agent: agent, refused: applied,
+                                        generation: generation, snapshot: snapshot, start: start)
+    }
+
+    /// A patch the agent refused for a layout change, built again with the new stored
+    /// properties of classes in side storage (SideFields). Returns `refused` unchanged,
+    /// or with a more precise reason, when the side route cannot keep objects valid either.
+    private func reloadWithSideFields(_ sources: [PatchSource], session: Session, agent: Agent, refused: ReloadReport,
+                                      generation: Int, snapshot: Bool, start: ContinuousClock.Instant) throws -> ReloadReport {
+        var report = refused
+        let sideStart = ContinuousClock.now
+        let directory = workspace.patches.appendingPathComponent("\(generation)-side-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let stems = sources.enumerated().map { index, source in
+            directory.appendingPathComponent("\(index)-\(URL(fileURLWithPath: source.file).lastPathComponent)").path
+        }
+        let built = BuiltFiles(workspace: workspace)
+        let files = try Shell.parallelMap(Array(zip(sources, stems))) { source, stem -> SideFields.File? in
+            guard try Shell.run(FrontendCommand.patchIR(source.command, primary: source.file, output: stem + ".ll")).succeeded,
+                  try Shell.run(FrontendCommand.patchSIL(source.command, primary: source.file, output: stem + ".sil")).succeeded
+            else { return nil }
+            return SideFields.File(original: source.isNew ? nil : try built.ir(of: source.file, command: source.command),
+                                   ir: try String(contentsOfFile: stem + ".ll", encoding: .utf8),
+                                   sil: try String(contentsOfFile: stem + ".sil", encoding: .utf8))
+        }.compactMap { $0 }
+        guard files.count == sources.count else { return refused }
+
+        switch SideFields.rewrite(files) {
+        case .refused(let type, let reason):
+            if !type.isEmpty {  // a class the side route could not take: its reason is the precise one
+                report.changedType = Self.demangle(type)
+                report.reason = reason
+            }
+            return report
+        case .rewritten(let texts, let types, let fields):
+            let classes = types.map { Self.demangle($0).split(separator: ".").last.map(String.init) ?? $0 }
+            if let name = SideFields.subclassElsewhere(of: classes, sources: Array(session.commands.keys),
+                                                       patched: Set(sources.map(\.file))) {
+                report.changedType = name
+                report.reason = "a class in another file subclasses \(name)"
+                return report
+            }
+            let objects = try Shell.parallelMap(Array(zip(texts, stems).enumerated())) { index, pair in
+                let (text, stem) = pair
+                try text.write(toFile: stem + ".side.ll", atomically: false, encoding: .utf8)
+                return try Shell.run(FrontendCommand.compileIR(sources[index].command, ir: stem + ".side.ll", output: stem + ".o"))
+            }
+            if let failure = objects.first(where: { !$0.succeeded }) {
+                report.status = .failed
+                report.errors = ["Compiling the side-field patch failed:", failure.output]
+                return report
+            }
+            report.timings.compile = milliseconds(since: sideStart)
+            let dylib = directory.appendingPathComponent("patch.dylib").path
+            let link = try Shell.run(FrontendCommand.link(sources[0].command, objects: stems.map { $0 + ".o" }, output: dylib))
+            guard link.succeeded else {
+                report.status = .failed
+                report.errors = ["Linking the side-field patch failed:", link.output]
+                return report
+            }
+            report.timings.link = milliseconds(since: sideStart) - report.timings.compile
+            report.changedType = nil
+            report.reason = nil
+            report.errors = []
+            report.sideFields = fields.isEmpty ? nil : fields.map { key in
+                let dot = key.lastIndex(of: ".")!  // `$s…C.name`
+                return Self.demangle(key[..<dot] + "Mn") + key[dot...]
+            }
+            var applied = try apply(dylib, agent: agent, report: report, generation: generation, snapshot: snapshot,
+                                    start: start, sideTypes: types)
+            if applied.status != .live { applied.sideFields = nil }  // another type changed too, such as a struct
+            return applied
+        }
     }
 
     /// The compiles of a patch for `paths`: every file changed since the build, each
@@ -127,11 +201,13 @@ public struct Reloader: Sendable {
 
     /// Loads the patch at `dylib` (a path the app can read), refreshes SwiftUI, and
     /// reads the screen.
+    /// With `sideTypes`, the agent's layout guard skips those classes: SideFields kept their objects valid.
     private func apply(_ dylib: String, agent: Agent, report: ReloadReport, generation: Int, snapshot: Bool,
-                       start: ContinuousClock.Instant) throws -> ReloadReport {
+                       start: ContinuousClock.Instant, sideTypes: [String] = []) throws -> ReloadReport {
         var report = report
         var session = workspace.loadSession()
-        let load = try agent.send("load \(dylib)", as: AgentLoad.self)
+        let command = sideTypes.isEmpty ? "load \(dylib)" : "load-side \(sideTypes.joined(separator: ",")) \(dylib)"
+        let load = try agent.send(command, as: AgentLoad.self)
         guard load.ok else {
             if load.needsRebuild == true {
                 report.status = .needsRebuild

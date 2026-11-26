@@ -109,6 +109,23 @@ try:
     check("model behavior change runs", result["status"] == "live" and tapped and buttons[-1] == "Write the agent",
           {"reload": result, "buttons": buttons})
 
+    # A stored property added to the model, a class the app was built with: the existing
+    # TaskModel object keeps its layout and the new property lives beside it.
+    edit(model, "    ]\n", "    ]\n    var taps = 0\n")
+    edit(model, "        items[index].done.toggle()\n", "        items[index].done.toggle()\n        taps += 1\n")
+    edit(list_view, 'Section("\\(model.items.filter(\\.done).count) of \\(model.items.count) done")',
+         'Section("\\(model.taps) taps")')
+    result = cli("reload", model, list_view)
+    check("new stored property of a class is live", result["status"] == "live" and result.get("sideFields") == ["TaskModel.taps"]
+          and any(label.upper() == "0 TAPS" for label in result.get("visibleText", [])), result)
+    tapped = tap("Refresh SwiftUI")
+    shown = labels()
+    tapped = tap("Refresh SwiftUI") and tapped  # undone, so the checks below see two open tasks
+    shown_again = labels()
+    check("the new property changes and the view follows",
+          tapped and any(label.upper() == "1 TAPS" for label in shown) and any(label.upper() == "2 TAPS" for label in shown_again),
+          {"tapped": tapped, "ui": shown, "ui after the second tap": shown_again})
+
     edit(list_view, '            .navigationTitle("Inbox")\n',
          '            .navigationTitle("Inbox")\n'
          '            .safeAreaInset(edge: .bottom) { Badge(text: leftText()) }\n')
