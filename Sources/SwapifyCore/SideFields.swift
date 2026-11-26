@@ -132,9 +132,60 @@ private struct Rewriter {
         let moved = try rewriteVtableCalls()
         changedTypes.formUnion(moved.map { $0 + "Mn" })
         guard !changedTypes.isEmpty else { throw SideFields.Refusal(type: "", reason: "no class layout changed") }
+        try checkUnmatchedSlots(moved: moved)
+        try checkNewSubclasses(of: Set(changedTypes.map { String($0.dropLast(2)) }))
+        try checkStoredKeyPaths()
         try addHelpers()
         let fields = sideFields.map { key, field in "\(field.owner).\(reportedNames[key] ?? field.name)" }.sorted()
         return .rewritten(texts, types: changedTypes.sorted(), fields: fields)
+    }
+
+    // MARK: What the rewrite does not cover
+
+    /// A changed class whose slots moved, but whose vtable calls nothing matched: its SIL
+    /// table was not found. Its calls would keep the edit's slots.
+    func checkUnmatchedSlots(moved: Set<String>) throws {
+        for llvm in changed {
+            let mangled = "$s" + llvm.dropFirst(2)
+            guard !moved.contains(mangled), let file = definingFile(mangled), let original = files[file].original,
+                  let old = Self.slots(original, mangled), let new = Self.slots(edited[file], mangled) else { continue }
+            if new.contains(where: { old[$0.key] != $0.value }) {
+                throw SideFields.Refusal(type: mangled + "Mn", reason: "its vtable calls could not be matched")
+            }
+        }
+    }
+
+    /// A class new in the patch whose superclass the edit changed: its own metadata has
+    /// the edit's layout, which neither the built slots nor side storage describe.
+    func checkNewSubclasses(of classes: Set<String>) throws {
+        for (index, module) in edited.enumerated() {
+            for entity in module.entities where entity.kind == .global {
+                guard let name = entity.name, name.hasPrefix("$s"), name.hasSuffix("CMF") else { continue }
+                let mangled = String(name.dropLast(2))
+                guard files[index].original?[name] == nil else { continue }  // the class was built
+                var ancestor = Self.superclass(module, mangled)
+                while case .swift(let parent) = ancestor {
+                    if classes.contains(parent) {
+                        throw SideFields.Refusal(type: parent + "Mn", reason: "a new class in the patch subclasses it")
+                    }
+                    ancestor = definingFile(parent).map { Self.superclass(edited[$0], parent) } ?? .none
+                }
+            }
+        }
+    }
+
+    /// A key path to a stored property of a class holds the field's offset inline
+    /// (swift/ABI/KeyPath.h: component discriminator 3 in bits 24 to 30), which is the
+    /// edit's layout. `@Observable` names computed properties, which are not affected.
+    func checkStoredKeyPaths() throws {
+        for text in texts {
+            for line in text.split(separator: "\n") where line.hasPrefix("@keypath") && !line.hasPrefix("@keypath_once") {
+                for element in IRModule.elements(of: String(line)) ?? [] where element.hasPrefix("i32 ") {
+                    guard let header = Int64(element.dropFirst(4)), (header >> 24) & 0x7F == 3 else { continue }
+                    throw SideFields.Refusal(type: "", reason: "a key path to a stored property of a class")
+                }
+            }
+        }
     }
 
     // MARK: Struct types and field plans
@@ -204,6 +255,7 @@ private struct Rewriter {
         // Superclass fields come first. They keep their places unless the superclass changed too.
         var result: [Int: Target] = [:]
         var inheritedNew = 0, inheritedOld = 0
+        guard Self.superclass(module, mangled) == Self.superclass(original, mangled) else { throw refuse("its superclass changed") }
         switch Self.superclass(module, mangled) {
         case .none, .objc:
             break
@@ -258,10 +310,13 @@ private struct Rewriter {
     mutating func rewriteFields(in index: Int) throws {
         guard !plans.isEmpty else { return }
         var lines = texts[index].components(separatedBy: "\n")
-        var function = ""
+        var function = "", selfObject = ""
         var uses = Set<String>()
         for (number, line) in lines.enumerated() {
-            if line.hasPrefix("define ") { function = IRModule.names(in: line).first ?? "" }
+            if line.hasPrefix("define ") {
+                function = IRModule.names(in: line).first ?? ""
+                selfObject = line.range(of: "ptr swiftself ").map { String(line[$0.upperBound...].prefix { $0 != ")" && $0 != "," }) } ?? ""
+            }
             guard line.contains("%T"), let type = plans.keys.first(where: { line.contains($0 + ",") || line.contains($0 + " ") })
             else { continue }
             if line.hasPrefix(type + " = type") { continue }
@@ -273,7 +328,8 @@ private struct Rewriter {
             case .element(let element):
                 lines[number] = String(line.dropLast(access.elementText.count)) + "\(element)"
             case .side(let key):
-                let initializing = function.hasSuffix("fc") ? "true" : "false"  // a designated initializer stores the first value
+                // A designated initializer stores the first value of its own object's fields.
+                let initializing = function.hasSuffix("fc") && access.base == selfObject ? "true" : "false"
                 lines[number] = "\(access.result) = call ptr @\"swapify.side.\(key)\"(ptr \(access.base), i1 \(initializing))"
                 uses.insert(key)
             }
@@ -301,8 +357,8 @@ private struct Rewriter {
         var entries: [String: String]  // member key -> implementation symbol
     }
 
-    /// `sil_vtable` blocks of every file: SIL class name -> table. A member is its name and
-    /// its type, because overloads share a name.
+    /// `sil_vtable` blocks of every file: qualified class name -> table. A member is its
+    /// name and its type, because overloads share a name.
     func vtables() -> [String: VTable] {
         var tables: [String: VTable] = [:]
         for file in files {
@@ -313,8 +369,15 @@ private struct Rewriter {
                     entries = [:]
                 } else if let current = name {
                     if line == "}" {
-                        let dealloc = entries.first { $0.key.hasPrefix("#\(current).deinit!deallocator") }?.value
-                        tables[current] = VTable(mangled: dealloc.map { String($0.dropLast(2)) } ?? "", entries: entries)
+                        // The header has the bare name (`ViewModel`); members and the deallocator have the
+                        // qualified one (`Feature.ViewModel`), as `class_method` does.
+                        let suffix = ".deinit!deallocator"
+                        let own = entries.first { key, _ in
+                            key.hasSuffix(suffix) && key.dropFirst().dropLast(suffix.count).split(separator: ".").last.map(String.init) == current
+                        }
+                        if let own {
+                            tables[String(own.key.dropFirst().dropLast(suffix.count))] = VTable(mangled: String(own.value.dropLast(2)), entries: entries)
+                        }
                         name = nil
                     } else if let entry = Self.vtableEntry(line) {
                         entries[entry.key] = entry.implementation
@@ -480,7 +543,7 @@ private struct Rewriter {
         }
         for index in texts.indices {
             if texts[index].contains("define hidden ptr @\"swapify.side.") {
-                texts[index] += "declare ptr @SWPSideField(ptr, ptr, ptr, ptr, i32, ptr)\n"
+                texts[index] += "declare ptr @SWPSideField(ptr, ptr, ptr, ptr, i32, ptr)\ndeclare void @SWPSideFieldReady(ptr, ptr)\n"
             }
             for key in (helperUses[index] ?? []).sorted() where !texts[index].contains("define hidden ptr @\"swapify.side.\(key)\"") {
                 texts[index] += "declare hidden ptr @\"swapify.side.\(key)\"(ptr, i1)\n"
@@ -521,9 +584,11 @@ private struct Rewriter {
             throw refuse("the initial value of '\(field.name)' is returned indirectly")
         }
         let symbol = field.type.contains("\"") ? field.type : "\"\(field.type)\""
+        // The storage key carries the type: a later edit that retypes the field gets new storage.
+        let storageKey = "\(key)#\(field.type.replacingOccurrences(of: "\"", with: ""))"
         return ("""
 
-        @"swapify.key.\(key)" = private unnamed_addr constant [\(key.utf8.count + 1) x i8] c"\(key)\\00"
+        @"swapify.key.\(key)" = private unnamed_addr constant [\(storageKey.utf8.count + 1) x i8] c"\(storageKey)\\00"
         define hidden ptr @"swapify.side.\(key)"(ptr %object, i1 %initializing) {
         entry:
           %fresh = alloca i8, align 1
@@ -535,6 +600,7 @@ private struct Rewriter {
         initialize:
           %value = call swiftcc \(initial.returns) @"\(initial.symbol)"()
           store \(initial.returns) %value, ptr %slot, align 8
+          call void @SWPSideFieldReady(ptr %object, ptr @"swapify.key.\(key)")
           br label %done
         done:
           ret ptr %slot
