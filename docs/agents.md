@@ -71,3 +71,5 @@ The server is dual-era:
 3. Read the visible text. Look at the screenshot when the change is visual.
 4. Use `tap` and `ui` to test behavior: navigate, toggle, submit.
 5. If the result says the layout changed, call `run` and continue from the new state.
+
+A reload is live, but the visible text can still show an old constant. A changed initial value of a `static let` or a global constant keeps its old value, even if nothing read it before the reload: the app computes it once, with the code it was built with. A computed property (`static var x: T { … }`) reloads. Make the value computed, or call `run`.
