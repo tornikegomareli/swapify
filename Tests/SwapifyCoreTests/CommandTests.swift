@@ -48,6 +48,18 @@ import Testing
         ])
     }
 
+    @Test func dropsTheOtherPrimaryFilesWhenTheSourcesAreInAFileList() {
+        let command = [
+            "/tc/usr/bin/swift-frontend", "-frontend", "-c", "-filelist", "/o/sources-1",
+            "-primary-file", "/p/B.swift", "-primary-file", "/p/C.swift", "-o", "/o/B.o", "-o", "/o/C.o",
+        ]
+        let patch = FrontendCommand.patch(command, primary: "/p/C.swift", output: "/tmp/C.o")
+        #expect(patch == [
+            "/tc/usr/bin/swift-frontend", "-frontend", "-c", "-filelist", "/o/sources-1",
+            "-primary-file", "/p/C.swift", "-o", "/tmp/C.o",
+        ])
+    }
+
     @Test func devicePatchesCompileToIRWithoutDebugInfo() {
         let command = self.command + ["-g", "-debug-info-format=dwarf", "-dwarf-version=5"]
         let ir = FrontendCommand.patchIR(command, primary: "/p/C.swift", output: "/tmp/C.ll")

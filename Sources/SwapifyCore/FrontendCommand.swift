@@ -10,11 +10,14 @@ public enum FrontendCommand {
         var result: [String] = []
         var marked = false
         var index = 0
+        // With -filelist every source is already in the list, and swift-frontend
+        // rejects plain input files next to it.
+        let listed = command.contains("-filelist")
         while index < command.count {
             let argument = command[index]
             let value = index + 1 < command.count ? command[index + 1] : ""
             if argument == "-primary-file" {
-                result += value == primary ? [argument, value] : [value]
+                result += value == primary ? [argument, value] : (listed ? [] : [value])
                 marked = marked || value == primary
                 index += 2
             } else if argument == primary, !marked {
