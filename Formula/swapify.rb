@@ -1,8 +1,8 @@
 class Swapify < Formula
   desc "Hot reload for coding agents on iOS, in the simulator and on an iPhone"
   homepage "https://github.com/tornikegomareli/swapify"
-  url "https://github.com/tornikegomareli/swapify/archive/refs/tags/v0.1.1.tar.gz"
-  sha256 "7b0e3eefbc72b2d42021405204c8110243f8bf7008d4ff734951a98d1695f0b0"
+  url "https://github.com/tornikegomareli/swapify/archive/refs/tags/v0.1.2.tar.gz"
+  sha256 "dd4a2f20b4585b5731723408a5f7d6a82419d8c31a2f6cbd1774d21bb818e01e"
   license "MIT"
   head "https://github.com/tornikegomareli/swapify.git", branch: "main"
 
