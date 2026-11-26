@@ -41,36 +41,43 @@ struct DevicePatches {
         guard !exports.isEmpty, let identity = session.signingIdentity else {
             throw SwapifyError("This device build has no record of the app's symbols. Run `swapify run --device`.")
         }
-        let objects = try Shell.parallelMap(Array(sources.enumerated())) { index, source in
-            try object(for: source, stem: directory.appendingPathComponent("\(index)-" + URL(fileURLWithPath: source.file).lastPathComponent).path,
-                       exports: exports)
+        let stems = sources.enumerated().map { index, source in
+            directory.appendingPathComponent("\(index)-" + URL(fileURLWithPath: source.file).lastPathComponent).path
         }
-        let errors = Reloader.compileErrors(objects.compactMap { if case .compileError(let output) = $0 { output } else { nil } })
+        let compiled = try Shell.parallelMap(Array(zip(sources, stems))) { source, stem in try ir(for: source, stem: stem) }
+        let errors = Reloader.compileErrors(compiled.compactMap { if case .compileError(let output) = $0 { output } else { nil } })
         if !errors.isEmpty { return .compileError(errors) }
-        for case .layoutChanged(let type, let reason) in objects { return .layoutChanged(type: type, reason: reason) }
-        let warnings = objects.compactMap { if case .built(_, let warning) = $0 { warning } else { nil } }
-        let compiled = milliseconds(since: start)
+        for case .layoutChanged(let type, let reason) in compiled { return .layoutChanged(type: type, reason: reason) }
+        let modules = compiled.compactMap { if case .ir(let module, _) = $0 { module } else { nil } }
+        let warnings = compiled.compactMap { if case .ir(_, let warning) = $0 { warning } else { nil } }
+
+        // The modules bind knowing each other: a new type keeps the definitions that
+        // the other files of the patch use, such as its metadata.
+        let declared = modules.reduce(into: Set<String>()) { $0.formUnion($1.declarations) }
+        let paths = try Shell.parallelMap(Array(modules.indices)) { index in
+            try object(from: modules[index], stem: stems[index], command: sources[index].command,
+                       exports: exports, keep: declared)
+        }
+        let compileTime = milliseconds(since: start)
 
         let dylib = directory.appendingPathComponent("patch.dylib")
-        let paths = objects.compactMap { if case .built(let path, _) = $0 { path } else { nil } }
         let link = try Shell.run(FrontendCommand.link(sources[0].command, objects: paths, output: dylib.path))
         guard link.succeeded else { throw SwapifyError("Linking the patch failed:\n\(link.output)") }
         let sign = try Shell.run(["codesign", "--force", "--sign", identity, dylib.path])
         guard sign.succeeded else { throw SwapifyError("Signing the patch failed:\n\(sign.output)") }
-        return .built(dylib: dylib, compile: compiled, link: milliseconds(since: start) - compiled, warnings: warnings)
+        return .built(dylib: dylib, compile: compileTime, link: milliseconds(since: start) - compileTime, warnings: warnings)
     }
 
-    enum Object {
-        /// The object file, and a warning if its layout was not checked.
-        case built(String, warning: String?)
+    enum Compiled {
+        /// The edit's IR, and a warning if its layout was not checked.
+        case ir(IRModule, warning: String?)
         /// The compiler output.
         case compileError(String)
         case layoutChanged(type: String, reason: String)
     }
 
-    /// Compiles one source to IR, checks its layout against the build, binds it to
-    /// the app's exports, and compiles the bound IR to `<stem>.o`.
-    func object(for source: PatchSource, stem: String, exports: Set<String>) throws -> Object {
+    /// Compiles one source to `<stem>.ll`, and checks its layout against the build.
+    func ir(for source: PatchSource, stem: String) throws -> Compiled {
         let compile = try Shell.run(FrontendCommand.patchIR(source.command, primary: source.file, output: stem + ".ll"))
         guard compile.succeeded else { return .compileError(compile.output) }
         let edited = IRModule(try String(contentsOfFile: stem + ".ll", encoding: .utf8))
@@ -85,13 +92,21 @@ struct DevicePatches {
                     + "its copy from the build no longer compiles."
             }
         }
-        try PatchBinder.bind(edited, exports: exports).ir.write(toFile: stem + ".bound.ll", atomically: false, encoding: .utf8)
-        let usr = URL(fileURLWithPath: source.command[0]).deletingLastPathComponent().deletingLastPathComponent()
-        let target = source.command.firstIndex(of: "-target").map { source.command[$0 + 1] } ?? ""
+        return .ir(edited, warning: warning)
+    }
+
+    /// Binds one module to the app's exports, keeping the definitions in `keep`, and
+    /// compiles the bound IR to `<stem>.o`. Returns the object's path.
+    func object(from module: IRModule, stem: String, command: [String], exports: Set<String>,
+                keep: Set<String>) throws -> String {
+        try PatchBinder.bind(module, exports: exports, keep: keep).ir
+            .write(toFile: stem + ".bound.ll", atomically: false, encoding: .utf8)
+        let usr = URL(fileURLWithPath: command[0]).deletingLastPathComponent().deletingLastPathComponent()
+        let target = command.firstIndex(of: "-target").map { command[$0 + 1] } ?? ""
         let object = try Shell.run([usr.appendingPathComponent("bin/clang").path, "-c", "-target", target, "-O0",
                                     stem + ".bound.ll", "-o", stem + ".o"])
         guard object.succeeded else { throw SwapifyError("Compiling the bound patch failed:\n\(object.output)") }
-        return .built(stem + ".o", warning: warning)
+        return stem + ".o"
     }
 
     /// The IR of `file` as it was built, compiled from its copy once per build.

@@ -11,7 +11,8 @@ import Foundation
 ///    a type's metadata as a constant getelementptr into the patch's `$s…Mf` gets
 ///    the imported `$s…N` instead.
 /// 2. Keep: every function with external linkage (the new bodies), every chain
-///    root, and what they reference. The patch's own metadata, and the records
+///    root, every definition that another module of the patch declares, and what
+///    they reference. The patch's own metadata, and the records
 ///    that would register it, are dropped. Types and conformances the app does not
 ///    export (new in the edit) keep their records.
 /// 3. A direct symbolic reference to an imported descriptor cannot point into
@@ -40,11 +41,14 @@ enum PatchBinder {
         return names
     }
 
-    static func bind(_ source: String, exports: Set<String>) throws -> Result {
-        try bind(IRModule(source), exports: exports)
+    static func bind(_ source: String, exports: Set<String>, keep: Set<String> = []) throws -> Result {
+        try bind(IRModule(source), exports: exports, keep: keep)
     }
 
-    static func bind(_ module: IRModule, exports: Set<String>) throws -> Result {
+    /// `keep`: names that other modules of the same patch declare. Those that this
+    /// module defines and the app does not export are kept, such as the metadata of
+    /// a new type that only another file uses.
+    static func bind(_ module: IRModule, exports: Set<String>, keep: Set<String> = []) throws -> Result {
         var imported = Set<String>()
         for entity in module.entities {
             guard let name = entity.name, exports.contains(name) else { continue }
@@ -74,6 +78,8 @@ enum PatchBinder {
             let local = ["internal", "private", "linkonce_odr", "weak_odr"].contains { entity.text.hasPrefix("define \($0)") }
             return (entity.kind == .function && !local) || name.hasSuffix("TX") || name.hasSuffix("Tx") ? name : nil
         }
+        let declared = module.declarations
+        roots += keep.filter { texts[$0] != nil && !declared.contains($0) }
         // A type or conformance only the patch defines keeps the records that register it.
         for entity in module.entities where entity.kind == .global && isRegistration(entity.text) {
             if let name = entity.name, let owner = owner(of: name), module[owner] != nil, !imported.contains(owner) {

@@ -70,6 +70,32 @@ struct DevicePatchTests {
         #expect(symbols.contains("_$s3App4CardV6detailSSvg"))
     }
 
+    /// The new file's module never names the view's metadata, only the existing
+    /// file's module does. The patch must still define it.
+    @Test func anExistingFileCanUseANewFilesView() throws {
+        defer { try? FileManager.default.removeItem(at: workspace.root) }
+        var session = try setUp()
+
+        let chip = workspace.root.path + "/App/Chip.swift"
+        try "import SwiftUI\nstruct Chip: View {\n    var body: some View { Text(\"Run\") }\n}\n"
+            .write(toFile: chip, atomically: true, encoding: .utf8)
+        guard case .built = try reload([chip], &session) else {
+            Issue.record("the new file did not build")
+            return
+        }
+        try ("import SwiftUI\nstruct Model { var count = 1 }\nfunc render() -> String { \"\\(Model().count)\" }\n"
+            + "func screen() -> some View { VStack { Chip() } }\n")
+            .write(toFile: view, atomically: true, encoding: .utf8)
+        guard case .built(let dylib, _, _, _) = try reload([view], &session) else {
+            Issue.record("the changed files did not build")
+            return
+        }
+        let defined = try Shell.run(["xcrun", "nm", "-U", "-j", dylib.path]).output.split(separator: "\n")
+        let undefined = try Shell.run(["xcrun", "nm", "-u", "-j", dylib.path]).output.split(separator: "\n")
+        #expect(defined.contains("_$s3App4ChipVN"))
+        #expect(!undefined.contains { $0.hasPrefix("_$s3App4Chip") })
+    }
+
     @Test func anAppTypeStillRefusesALayoutChange() throws {
         defer { try? FileManager.default.removeItem(at: workspace.root) }
         var session = try setUp()

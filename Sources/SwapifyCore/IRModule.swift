@@ -58,6 +58,17 @@ struct IRModule {
 
     subscript(name: String) -> Entity? { index[name].map { entities[$0] } }
 
+    /// The names the module uses but does not define: `declare` lines, and
+    /// `external` and `extern_weak` globals.
+    var declarations: Set<String> {
+        Set(entities.compactMap { entity in
+            if entity.kind == .other, entity.text.hasPrefix("declare ") { return Self.names(in: entity.text).first }
+            guard entity.kind == .global, let (name, end) = Self.scanName(Array(entity.text.utf8), from: 0) else { return nil }
+            let value = entity.text.utf8.dropFirst(end + " = ".utf8.count)
+            return value.starts(with: "external ".utf8) || value.starts(with: "extern_weak ".utf8) ? name : nil
+        })
+    }
+
     /// The name a global or alias line defines: `@name = …`.
     static func definedName(_ line: String) -> String? {
         guard let (name, end) = scanName(Array(line.utf8), from: 0) else { return nil }
