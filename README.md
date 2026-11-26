@@ -8,8 +8,7 @@
 
 swapify is an open-source command-line tool for iOS projects. When a coding agent edits a Swift file, swapify compiles that file and loads it into the app that is already running, in the iOS Simulator or on an iPhone. The app keeps its screen, its navigation stack and its `@State`. The agent gets a screenshot and the visible text back, so it can check each change before it makes the next one.
 
-It works with Claude Code, Codex, Cursor and any other MCP client. The image above is from a recording of Claude Code building one screen from an empty app; [Examples/Activity](Examples/Activity) has the project and the prompt.
-
+It works with Claude Code, Codex, Cursor and any other MCP client
 ## Install
 
 ```sh
