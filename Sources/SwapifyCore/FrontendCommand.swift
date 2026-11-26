@@ -26,7 +26,7 @@ public enum FrontendCommand {
                 index += 1
             } else if dropsValue(argument) {
                 index += 2
-            } else if argument == "-frontend-parseable-output" {
+            } else if dropsFlag(argument) {
                 index += 1
             } else {
                 result.append(argument)
@@ -73,6 +73,13 @@ public enum FrontendCommand {
     /// member (SideFields). Without debug info, like `patchIR`.
     public static func patchSIL(_ command: [String], primary: String, output: String) -> [String] {
         patchIR(command, primary: primary, output: output).map { $0 == "-emit-ir" ? "-emit-sil" : $0 }
+    }
+
+    /// Build outputs without a value of their own. `-emit-localized-strings`
+    /// (SWIFT_EMIT_LOC_STRINGS) writes next to the dropped `-emit-localized-strings-path`,
+    /// and without that path, to `/`.
+    private static func dropsFlag(_ argument: String) -> Bool {
+        ["-frontend-parseable-output", "-emit-localized-strings"].contains(argument)
     }
 
     private static func dropsValue(_ argument: String) -> Bool {
