@@ -66,6 +66,12 @@ import Testing
         #expect(patch == FrontendCommand.patch(self.command, primary: "/p/C.swift", output: "/tmp/C.o"))
     }
 
+    @Test func compilesWithoutCodeCoverage() {
+        let command = self.command + ["-profile-generate", "-profile-coverage-mapping"]
+        let patch = FrontendCommand.patch(command, primary: "/p/C.swift", output: "/tmp/C.o")
+        #expect(patch == FrontendCommand.patch(self.command, primary: "/p/C.swift", output: "/tmp/C.o"))
+    }
+
     @Test func devicePatchesCompileToIRWithoutDebugInfo() {
         let command = self.command + ["-g", "-debug-info-format=dwarf", "-dwarf-version=5"]
         let ir = FrontendCommand.patchIR(command, primary: "/p/C.swift", output: "/tmp/C.ll")
