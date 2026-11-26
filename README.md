@@ -59,6 +59,14 @@ claude mcp add swapify -- swapify mcp
 
 [docs/agents.md](docs/agents.md) has the setup for each agent.
 
+For hand edits, for example in Xcode, run `swapify watch` in a second terminal after `swapify run`. It reloads the Swift files of the project each time you save them, new files too, and prints one line for each reload:
+
+```text
+swapify: TodayView.swift live in 698 ms
+```
+
+A save that does not change the text does nothing. Ctrl-C stops the watch.
+
 ## Simulator or iPhone
 
 |  | Simulator | iPhone |
@@ -81,7 +89,7 @@ swapify screenshot         # the app at 1x; --full for the whole screen
 swapify doctor             # checks the Mac, Xcode, the project, the build, the simulator or iPhone, and the app
 ```
 
-`run`, `reload`, `ui` and `doctor` accept `--json`.
+`run`, `reload`, `watch`, `ui` and `doctor` accept `--json`.
 
 ## What reloads
 

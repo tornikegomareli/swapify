@@ -9,6 +9,7 @@ generated Showcase.xcodeproj then needs a signing team.
 """
 import json
 import os
+import select
 import subprocess
 import sys
 
@@ -51,6 +52,30 @@ def labels():
 
 def tap(label):
     return subprocess.run([swapify, "tap", label], cwd=example, capture_output=True).returncode == 0
+
+
+def watch_reload(path, old, new):
+    """Starts `swapify watch`, saves the edit as Xcode does (write, then rename), and
+    returns the first reload that the watch prints."""
+    watch = subprocess.Popen([swapify, "watch", "--json"], cwd=example, text=True,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        if select.select([watch.stderr], [], [], 30)[0]:  # "Watching …": the first scan is done
+            watch.stderr.readline()
+        text = open(path).read()
+        assert old in text, f"{old!r} not in {path}"
+        open(path + ".saving", "w").write(text.replace(old, new))
+        os.replace(path + ".saving", path)
+        if not select.select([watch.stdout], [], [], 60)[0]:
+            return {"status": "failed", "errors": ["swapify watch printed nothing in 60 s"]}
+        line = watch.stdout.readline()
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            return {"status": "failed", "errors": [line]}
+    finally:
+        watch.terminate()
+        watch.wait()
 
 
 try:
@@ -119,6 +144,10 @@ try:
     shown = labels()
     check("new type's stored properties change live",
           result["status"] == "live" and "New banner" in shown and "Two more fields" in shown, {"reload": result, "ui": shown})
+
+    result = watch_reload(list_view, '.navigationTitle("Inbox")', '.navigationTitle("Watched")')
+    shown = labels()
+    check("watch reloads a saved file", result["status"] == "live" and "Watched" in shown, {"reload": result, "ui": shown})
 
     edit(list_view, "    let model: TaskModel\n", "    let model: TaskModel\n    let extra = 1\n")
     result = cli("reload", list_view)
