@@ -130,6 +130,62 @@ struct SideFieldsTests {
         #expect(result.ir["Counter.swift"]?.contains("getelementptr i8, ptr @\"$s3App7CounterC5resetyyF\", i64 0") == true)
     }
 
+    /// The body of the function whose name starts with `prefix`.
+    func body(_ ir: String, _ prefix: String) -> String {
+        guard let start = ir.components(separatedBy: "\n").firstIndex(where: { $0.hasPrefix("define ") && $0.contains("@\"\(prefix)") })
+        else { return "" }
+        let lines = ir.components(separatedBy: "\n")[start...]
+        return lines.prefix { $0 != "}" }.joined(separator: "\n")
+    }
+
+    @Test func aClassNestedInAnotherTypeGetsItsVtableCallsRewritten() throws {
+        let built = "enum Feature {\n    class ViewModel {\n        var a = 1\n        init() {}\n        func f() -> Int { a }\n    }\n}\n"
+        let edited = built.replacingOccurrences(of: "        var a = 1\n", with: "        var a = 1\n        var count = 5\n")
+            .replacingOccurrences(of: "func f() -> Int { a }", with: "func f() -> Int { a + count }")
+        let result = try rewrite(built: ["Feature.swift": built], edited: ["Feature.swift": edited])
+        guard case .rewritten(_, let types, _) = result.outcome else { Issue.record("\(result.outcome)"); return }
+        #expect(types == ["$s3App7FeatureO9ViewModelCMn"])
+        #expect(result.ir["Feature.swift"]?.contains("getelementptr i8, ptr @\"$s3App7FeatureO9ViewModelC5countSivg\", i64 0") == true)
+    }
+
+    @Test func onlyTheInitializersOwnObjectStoresItsFirstValue() throws {
+        let built = "final class Box {\n    var a = 1\n    init() {}\n}\n\nfinal class Row {\n    let label: Int\n    init(box: Box) { label = box.a }\n}\n"
+        let edited = built.replacingOccurrences(of: "    var a = 1\n", with: "    var a = 1\n    var b = 2\n")
+            .replacingOccurrences(of: "label = box.a", with: "label = box.b")
+        let result = try rewrite(built: ["Box.swift": built], edited: ["Box.swift": edited])
+        let ir = try #require(result.ir["Box.swift"])
+        // Box's initializer stores b of its own object; Row's reads b of a Box that may predate the patch.
+        #expect(body(ir, "$s3App3BoxCACycfc").contains("@\"swapify.side.$s3App3BoxC.b\"(ptr %0, i1 true)"))
+        let row = body(ir, "$s3App3RowC3boxAcA3BoxC_tcfc")
+        #expect(row.contains("@\"swapify.side.$s3App3BoxC.b\"") && row.contains("i1 false)") && !row.contains("i1 true)"))
+        // The storage key carries the field's type, so retyping it later gets new storage.
+        #expect(ir.contains("c\"$s3App3BoxC.b#symbolic Si\\00\""))
+        #expect(ir.contains("call void @SWPSideFieldReady(ptr %object"))
+    }
+
+    @Test func aNewSubclassOfAChangedClassIsRefused() throws {
+        let edited = Self.counter
+            .replacingOccurrences(of: "    var a = 1\n    init() {}", with: "    var a = 1\n    var count = 5\n    init() {}")
+            + "final class Fancy: Counter {}\n"
+        let result = try rewrite(built: ["Counter.swift": Self.counter], edited: ["Counter.swift": edited])
+        #expect(result.outcome == .refused(type: "$s3App7CounterCMn", reason: "a new class in the patch subclasses it"))
+    }
+
+    @Test func aKeyPathToAStoredPropertyIsRefused() throws {
+        let built = "final class Box {\n    var a = 1\n    init() {}\n}\n"
+        let edited = "final class Box {\n    var a = 1\n    var count = 5\n    init() {}\n}\n"
+            + "func path() -> ReferenceWritableKeyPath<Box, Int> { \\Box.count }\n"
+        let result = try rewrite(built: ["Box.swift": built], edited: ["Box.swift": edited])
+        #expect(result.outcome == .refused(type: "", reason: "a key path to a stored property of a class"))
+    }
+
+    @Test func aChangedSuperclassIsRefused() throws {
+        let bases = "class BaseA {\n    var x = 1\n    init() {}\n}\n\nclass BaseB {\n    var z = \"z\"\n    init() {}\n}\n\n"
+        let result = try rewrite(built: ["Model.swift": bases + "class Model: BaseA {\n    var m = 1\n}\n"],
+                                 edited: ["Model.swift": bases + "class Model: BaseB {\n    var m = 1\n}\n"])
+        #expect(result.outcome == .refused(type: "$s3App5ModelCMn", reason: "its superclass changed"))
+    }
+
     @Test func aStructChangeIsRefused() throws {
         let built = "struct Point {\n    var x = 1\n}\n"
         let result = try rewrite(built: ["Point.swift": built],
