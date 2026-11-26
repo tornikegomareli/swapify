@@ -1,7 +1,7 @@
 #import "Agent.h"
 #import <objc/runtime.h>
 #include <dlfcn.h>
-#include <os/lock.h>
+#include <pthread.h>
 
 // Stored properties that a patch adds to a class the app was built with. Objects keep
 // the layout they were made with. Each new field lives in a block of memory attached
@@ -37,22 +37,25 @@ static size_t mangledLength(const uint8_t *name) {
     return (size_t)(p - name);
 }
 
-// One field of one object.
+// One field of one object. `ready` once its first value is stored.
 @interface SWPSideBox : NSObject {
 @public
     void *storage;
     const void *type;
+    BOOL ready;
 }
 @end
 
 @implementation SWPSideBox
 - (void)dealloc {
-    witnesses(type)->destroy(storage, type);
+    if (ready) witnesses(type)->destroy(storage, type);
     free(storage);
 }
 @end
 
-static os_unfair_lock lock = OS_UNFAIR_LOCK_INIT;
+// One lock for every box; `stored` wakes threads that wait for a first value.
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t stored = PTHREAD_COND_INITIALIZER;
 
 // Every patch has its own copy of a key's string. The association key is one pointer
 // per string content, so a later patch finds the storage an earlier one made.
@@ -67,14 +70,15 @@ static const void *internedKey(const char *key) {
     return pointer;
 }
 
-// The address of field `key` ("<type>.<field>") of `object`. `typeName` is the field's
-// mangled type, resolved in `context`, the descriptor of the type that declares it. The
-// first call for an object and field makes the storage and sets *fresh, so the patch
-// stores the field's initial value there; a designated initializer passes
-// `initializing`, because it stores the first value itself.
+// The address of field `key` ("<type>.<field>#<field type>") of `object`. `typeName` is
+// the field's mangled type, resolved in `context`, the descriptor of the type that
+// declares it. The first call for an object and field makes the storage and sets
+// *fresh: the patch stores the field's initial value there, then calls
+// SWPSideFieldReady. Meanwhile other threads wait here. A designated initializer passes
+// `initializing`, because it stores the first value of its own object itself.
 __attribute__((visibility("default"))) void *SWPSideField(void *object, const char *key, const char *typeName,
                                                           const void *context, int initializing, bool *fresh) {
-    os_unfair_lock_lock(&lock);
+    pthread_mutex_lock(&lock);
     const void *stable = internedKey(key);
     id target = (__bridge id)object;
     SWPSideBox *box = objc_getAssociatedObject(target, stable);
@@ -85,10 +89,22 @@ __attribute__((visibility("default"))) void *SWPSideField(void *object, const ch
         box = [SWPSideBox new];
         box->type = type;
         if (posix_memalign(&box->storage, MAX((size_t)(w->flags & 0xFF) + 1, 16), MAX(w->size, 1)) != 0) abort();
+        box->ready = initializing != 0;
         objc_setAssociatedObject(target, stable, box, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         *fresh = !initializing;
+    } else {
+        while (!box->ready) pthread_cond_wait(&stored, &lock);
     }
     void *storage = box->storage;
-    os_unfair_lock_unlock(&lock);
+    pthread_mutex_unlock(&lock);
     return storage;
+}
+
+// The first value of a fresh field is stored: other threads may read it now.
+__attribute__((visibility("default"))) void SWPSideFieldReady(void *object, const char *key) {
+    pthread_mutex_lock(&lock);
+    SWPSideBox *box = objc_getAssociatedObject((__bridge id)object, internedKey(key));
+    box->ready = YES;
+    pthread_cond_broadcast(&stored);
+    pthread_mutex_unlock(&lock);
 }
