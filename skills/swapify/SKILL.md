@@ -46,7 +46,9 @@ The MCP tools `ui`, `tap`, and `screenshot` do the same, and `tap` returns the v
 
 These reload, but objects that exist keep their old values:
 
-- The initial value of a stored property or a `static let`.
+- The initial value of a stored property.
 - Code that ran once at launch, such as `App.init`.
+
+A changed initial value of a `static let` or a global constant keeps its old value, even if nothing read it before the reload: the app computes it once, with the code it was built with. A computed property (`static var x: T { … }`) reloads. If the screen still shows an old constant, make it a computed property, or run `swapify run`.
 
 Each reload compiles every file changed since the last build, in parallel. A large file with many macros can take several seconds.

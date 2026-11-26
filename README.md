@@ -101,6 +101,7 @@ swapify doctor             # checks the Mac, Xcode, the project, the build, the 
 | A new Swift file in a folder with app files, or below one | Live |
 | Stored properties of a type created since the last build | Live |
 | Files in Swift packages that the app builds | Live |
+| The initial value of a `static let` or a global constant, changed | Keeps the old value: the app computes it once, with the code it was built with, the first time it is read. A computed property (`static var x: T { … }`) is live |
 | A stored property of a type the app was built with: added, removed, renamed, or retyped | Rebuild |
 | A method added to or removed from a non-final class | Rebuild |
 | A deleted file, resources, `Info.plist`, dependencies | Rebuild |
