@@ -67,7 +67,7 @@ public struct Reloader: Sendable {
         }
         report.timings.link = milliseconds(since: start) - report.timings.compile
         let applied = try apply(dylib, agent: agent, report: report, generation: generation, snapshot: snapshot, start: start)
-        guard applied.status == .needsRebuild, applied.changedType != nil else { return applied }
+        guard applied.status == .needsRebuild, applied.changedKind == "class" else { return applied }
         return try reloadWithSideFields(sources, session: session, agent: agent, refused: applied,
                                         generation: generation, snapshot: snapshot, start: start)
     }
@@ -99,6 +99,7 @@ public struct Reloader: Sendable {
         case .refused(let type, let reason):
             if !type.isEmpty {  // a class the side route could not take: its reason is the precise one
                 report.changedType = Self.demangle(type)
+                report.changedKind = Self.kind(type)
                 report.reason = reason
             }
             return report
@@ -129,7 +130,9 @@ public struct Reloader: Sendable {
                 return report
             }
             report.timings.link = milliseconds(since: sideStart) - report.timings.compile
+            report.status = .failed  // until the agent loads it
             report.changedType = nil
+            report.changedKind = nil
             report.reason = nil
             report.errors = []
             report.sideFields = fields.isEmpty ? nil : fields.map { key in
@@ -178,6 +181,7 @@ public struct Reloader: Sendable {
         case .layoutChanged(let type, let reason):
             report.status = .needsRebuild
             report.changedType = Self.demangle(type)
+            report.changedKind = Self.kind(type)
             report.reason = reason
             report.errors = ["layout changed"]
             return report
@@ -212,6 +216,7 @@ public struct Reloader: Sendable {
             if load.needsRebuild == true {
                 report.status = .needsRebuild
                 report.changedType = load.type.map(Self.demangle)
+                report.changedKind = load.type.flatMap(Self.kind)
                 report.reason = load.reason
             }
             report.errors = [load.error ?? "The agent rejected the patch."]
@@ -259,6 +264,11 @@ public struct Reloader: Sendable {
         var seen = Set<String>()
         return (try agent.send("ui", as: AgentUI.self).elements ?? [])
             .map(\.label).filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    /// The kind of a nominal type descriptor symbol, `$s…CMn`: "class", "struct" or "enum".
+    static func kind(_ symbol: String) -> String? {
+        symbol.hasSuffix("CMn") ? "class" : symbol.hasSuffix("VMn") ? "struct" : symbol.hasSuffix("OMn") ? "enum" : nil
     }
 
     static func demangle(_ symbol: String) -> String {
