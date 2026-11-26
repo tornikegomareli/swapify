@@ -51,6 +51,10 @@ const char *SWPLayoutDifference(const uint8_t *old, const uint8_t *new) {
         if (*(const uint32_t *)(old + 32) != *(const uint32_t *)(new + 32))
             return "methods added or removed";
         if (memcmp(old + 24, new + 24, 20) != 0) return "stored properties changed";
+        // Offset 20: the superclass's mangled name. Objects of the old superclass keep its layout.
+        const uint8_t *oldSuper = relative(old + 20), *newSuper = relative(new + 20);
+        if ((oldSuper == NULL) != (newSuper == NULL) || (oldSuper && !sameMangledName(oldSuper, newSuper)))
+            return "superclass changed";
     } else if (kind == KindStruct || kind == KindEnum) {
         if (memcmp(old + 20, new + 20, 8) != 0)
             return kind == KindEnum ? "cases changed" : "stored properties changed";
