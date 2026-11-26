@@ -12,7 +12,7 @@ struct Swapify: ParsableCommand {
             After that, `swapify reload <File.swift>` makes an edit live in about a second.
             """,
         version: SwapifyInfo.version,
-        subcommands: [Init.self, Run.self, Reload.self, UI.self, Tap.self, Screenshot.self,
+        subcommands: [Init.self, Run.self, Reload.self, Watch.self, UI.self, Tap.self, Screenshot.self,
                       Doctor.self, MCP.self, Hook.self]
     )
 }
@@ -150,6 +150,40 @@ extension Swapify {
             let report = try Reloader(workspace: try currentWorkspace()).reload(files: files, snapshot: !noSnapshot)
             if output.json { try Terminal.json(report) } else { Terminal.display(report) }
             if report.status != .live { throw ExitCode.failure }
+        }
+    }
+
+    struct Watch: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Reload Swift files when they are saved, for example by Xcode. Runs until Ctrl-C.")
+
+        @OptionGroup var output: OutputOptions
+
+        func run() throws {
+            let workspace = try currentWorkspace()
+            let session = workspace.loadSession()
+            guard session.port != 0, !session.commands.isEmpty else {
+                throw ValidationError("No app is running. Run `swapify run` or `swapify run --device` first.")
+            }
+            var watcher = Watcher(files: Array(session.commands.keys) + Array(session.borrowed.keys),
+                                  root: workspace.root.path)
+            Terminal.progress("Watching \(watcher.files.count) Swift files. Ctrl-C stops.")
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            while true {
+                let files = watcher.nextChanges()
+                var report: ReloadReport
+                do {
+                    report = try Reloader(workspace: workspace).reload(files: files)
+                } catch {
+                    report = ReloadReport(status: .failed, files: files)
+                    report.errors = ["\(error)"]
+                }
+                // JSON: one report per line.
+                print(output.json ? String(decoding: try encoder.encode(report), as: UTF8.self)
+                      : report.status == .live ? report.headline : report.summary)
+                fflush(stdout)
+            }
         }
     }
 
