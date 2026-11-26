@@ -35,6 +35,8 @@ public struct ReloadReport: Codable, Sendable {
     public var errors: [String] = []
     /// The type whose layout changed, for `needsRebuild`.
     public var changedType: String?
+    /// Its kind: "class", "struct" or "enum".
+    public var changedKind: String?
     public var reason: String?
     /// The command that rebuilds and relaunches, if not `swapify run`: `swapify run --device`.
     public var rebuildCommand: String?
