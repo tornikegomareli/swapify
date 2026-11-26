@@ -68,11 +68,11 @@ __unused static size_t witnessTableWords(uintptr_t table) {
     return protocol ? 1 + *(const uint32_t *)(protocol + 16) : 0;
 }
 
-__unused static NSDictionary *checkLayouts(const SWPImage *patch) {
+__unused static NSDictionary *checkLayouts(const SWPImage *patch, NSSet<NSString *> *sideTypes) {
     for (size_t i = 0; i < patch->descriptors.count; i++) {
         SWPSymbol *symbol = &patch->descriptors.symbols[i];
         SWPSymbol *old = original(offsetof(SWPImage, descriptors), symbol->name);
-        if (!old) continue;
+        if (!old || [sideTypes containsObject:@(symbol->name + 1)]) continue;
         const char *reason = SWPLayoutDifference((const uint8_t *)old->address,
                                                  (const uint8_t *)symbol->address);
         if (reason)
@@ -82,7 +82,7 @@ __unused static NSDictionary *checkLayouts(const SWPImage *patch) {
     return nil;
 }
 
-NSDictionary *SWPPatcherLoad(NSString *path) {
+NSDictionary *SWPPatcherLoad(NSString *path, NSSet<NSString *> *sideTypes) {
     double start = SWPNowMs();
     uint32_t imagesBefore = _dyld_image_count();
     if (!dlopen(path.UTF8String, RTLD_NOW))
@@ -105,7 +105,7 @@ NSDictionary *SWPPatcherLoad(NSString *path) {
     // Mac for devices.
 
     // A rejected patch stays loaded but inert: nothing points at its code.
-    NSDictionary *rejection = checkLayouts(&patch);
+    NSDictionary *rejection = checkLayouts(&patch, sideTypes);
     if (rejection) {
         free(addresses);
         return rejection;

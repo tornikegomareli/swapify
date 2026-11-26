@@ -45,7 +45,9 @@ const char *SWPLayoutDifference(const uint8_t *old, const uint8_t *new);
 
 // Patcher.m: loads patches.
 void SWPPatcherStart(void);
-NSDictionary *SWPPatcherLoad(NSString *path);
+// `sideTypes` names the descriptors ($s…Mn) of classes whose layout changes the CLI
+// moved to side storage (SideFields.m); the layout guard skips them.
+NSDictionary *SWPPatcherLoad(NSString *path, NSSet<NSString *> *sideTypes);
 int SWPPatcherGeneration(void);
 
 // SwiftUIRefresh.m: re-renders SwiftUI. Main thread only.

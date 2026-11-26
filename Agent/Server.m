@@ -59,7 +59,14 @@ static NSDictionary *handle(NSString *line) {
             @"swiftUIRefresh" : @(SWPSwiftUIRefreshAvailable()),
             @"device" : @((BOOL)!TARGET_OS_SIMULATOR), @"traced" : @(traced()),  // device: no debugger check
         };
-    if ([line hasPrefix:@"load "]) return SWPPatcherLoad([line substringFromIndex:5]);
+    if ([line hasPrefix:@"load "]) return SWPPatcherLoad([line substringFromIndex:5], nil);
+    if ([line hasPrefix:@"load-side "]) {  // load-side <$s…Mn,…> <path>: the path may contain spaces
+        NSString *rest = [line substringFromIndex:10];
+        NSRange space = [rest rangeOfString:@" "];
+        if (space.location == NSNotFound) return @{@"ok" : @NO, @"error" : @"usage: load-side <types> <path>"};
+        NSArray *types = [[rest substringToIndex:space.location] componentsSeparatedByString:@","];
+        return SWPPatcherLoad([rest substringFromIndex:space.location + 1], [NSSet setWithArray:types]);
+    }
     if ([line isEqualToString:@"refresh"]) return onMain(^{ return SWPSwiftUIRefresh(); });
     // device: with no path the PNG comes back in the reply, because the app cannot write Mac paths.
     if ([line isEqualToString:@"snapshot"]) return onMain(^{ return SWPSnapshot(nil, 1); });
