@@ -4,7 +4,11 @@
 
 ### Added
 
-- In the simulator, a stored property added to a class the app was built with reloads instead of asking for a rebuild, for final and non-final classes, `@Observable` ones too. Objects the app already made keep their layout: the new property lives beside each object, starts at its initial value, and is released with the object. It moves into the object at the next build. A method added to or removed from a non-final class reloads too. Structs, enums, removed, renamed or retyped properties, `@Published` properties, and every layout change on an iPhone still need a rebuild. The reload says which properties live beside their objects (`sideFields`).
+- In the simulator, a stored property added to a class the app was built with reloads instead of asking for a rebuild, for final and non-final classes, `@Observable` ones too. Objects the app already made keep their layout: the new property lives beside each object, starts at its initial value, and is released with the object. It moves into the object at the next build. A method added to or removed from a non-final class reloads too. Structs, enums, removed, renamed or retyped properties, `@Published` properties, and every layout change on an iPhone still need a rebuild. The reload says which properties live beside their objects (`sideFields`), and a refusal names the kind of the type whose layout changed (`changedKind`).
+
+### Fixed
+
+- A class whose superclass changed passed the layout guard when its field count and vtable size stayed the same. It now needs a rebuild.
 
 ## 0.1.1 (2026-11-26)
 
