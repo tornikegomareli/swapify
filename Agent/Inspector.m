@@ -47,10 +47,17 @@ static NSArray *accessibilityChildren(id node) {
     return [node isKindOfClass:UIView.class] ? ((UIView *)node).subviews : @[];
 }
 
+// An element with no place on screen has the frame CGRectNull, whose origin is
+// infinite, and JSON has no such number.
+static BOOL hasFrame(id element) {
+    CGRect frame = [element accessibilityFrame];
+    return isfinite(frame.origin.x) && isfinite(frame.origin.y);
+}
+
 static void collectElements(id node, NSMutableArray *elements, int depth) {
     if (depth > 80) return;
     if ([node isKindOfClass:UIView.class] && ((UIView *)node).hidden) return;
-    if ([node isAccessibilityElement]) [elements addObject:node];
+    if ([node isAccessibilityElement] && hasFrame(node)) [elements addObject:node];
     for (id child in accessibilityChildren(node)) collectElements(child, elements, depth + 1);
 }
 
