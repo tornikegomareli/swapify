@@ -59,6 +59,19 @@ public enum FrontendCommand {
         }
     }
 
+    /// Compiles a patch's IR, as rewritten, to an object with the clang next to swift-frontend.
+    public static func compileIR(_ command: [String], ir: String, output: String) -> [String] {
+        let usr = URL(fileURLWithPath: command[0]).deletingLastPathComponent().deletingLastPathComponent()
+        let target = command.firstIndex(of: "-target").map { command[$0 + 1] } ?? ""
+        return [usr.appendingPathComponent("bin/clang").path, "-c", "-target", target, "-O0", ir, "-o", output]
+    }
+
+    /// The patch command for the edit's SIL, where each vtable call names its class and
+    /// member (SideFields). Without debug info, like `patchIR`.
+    public static func patchSIL(_ command: [String], primary: String, output: String) -> [String] {
+        patchIR(command, primary: primary, output: output).map { $0 == "-emit-ir" ? "-emit-sil" : $0 }
+    }
+
     private static func dropsValue(_ argument: String) -> Bool {
         ["-o", "-supplementary-output-file-map", "-serialize-diagnostics-path", "-index-store-path",
          "-index-unit-output-path"].contains(argument)
