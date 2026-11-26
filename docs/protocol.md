@@ -59,6 +59,14 @@ A layout change rejects the patch:
 {"ok":false,"needsRebuild":true,"error":"layout changed","type":"$s8Showcase8TaskItemVMn","reason":"stored properties changed"}
 ```
 
+## load-side
+
+```text
+load-side $s8Showcase9TaskModelCMn /path/to/.swapify/patches/5-9F8E7D6C/patch.dylib
+```
+
+`load` for a patch that keeps the new stored properties of classes in side storage (Agent/SideFields.m). The CLI rewrote the patch so that existing objects keep their layout, and the layout guard skips the listed type descriptors, separated by commas. The reply is `load`'s.
+
 ## refresh
 
 ```text
