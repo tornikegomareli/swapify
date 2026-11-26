@@ -183,14 +183,14 @@ private struct Project {
                           "-primary-file", "/r/New.swift", "-o", "/o/New.o"])
     }
 
-    @Test func compilesRunInParallelAndKeepTheirOrder() throws {
-        let start = ContinuousClock.now
+    // How many run at once depends on the free cores (concurrentPerform), so the test checks
+    // the contract, not the wall clock: results keep their order, and an error is rethrown.
+    @Test func parallelCompilesKeepTheirOrderAndRethrow() throws {
         let values = try Shell.parallelMap(Array(0..<6)) { index -> Int in
-            Thread.sleep(forTimeInterval: 0.2)
+            Thread.sleep(forTimeInterval: 0.05 * Double(6 - index)) // later items finish first
             return index * 10
         }
         #expect(values == [0, 10, 20, 30, 40, 50])
-        #expect(ContinuousClock.now - start < .milliseconds(1000))
         #expect(throws: SwapifyError.self) {
             try Shell.parallelMap([1, 2]) { value -> Int in
                 if value == 2 { throw SwapifyError("two") }
