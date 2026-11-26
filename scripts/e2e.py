@@ -166,6 +166,15 @@ try:
     shown = labels()
     check("watch reloads a saved file", result["status"] == "live" and "Watched" in shown, {"reload": result, "ui": shown})
 
+    # SwiftUI gives a bar with nothing in it an accessibility element that has no frame.
+    edit(list_view, '            .navigationTitle("Watched")\n',
+         '            .navigationTitle("Watched")\n'
+         '            .safeAreaBar(edge: .bottom) { if model.items.isEmpty { Text("All done") } }\n')
+    result = cli("reload", list_view)
+    shown = labels()
+    check("ui answers with an empty bar on screen", result["status"] == "live" and "Watched" in shown,
+          {"reload": result, "ui": shown})
+
     edit(list_view, "    let model: TaskModel\n", "    let model: TaskModel\n    let extra = 1\n")
     result = cli("reload", list_view)
     check("app type's stored properties still need a rebuild", result["status"] == "needsRebuild", result)
