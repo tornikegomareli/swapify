@@ -31,7 +31,7 @@ struct DevicePatchTests {
                                   "-target", "arm64-apple-ios27.0", "-sdk", iOSSDK!, "-enable-implicit-dynamic", "-Onone"]
         try FileManager.default.createDirectory(at: workspace.stateDirectory, withIntermediateDirectories: true)
         try "0x00001000  _$s3App6renderSSyF\n".write(to: workspace.exports, atomically: true, encoding: .utf8)
-        let copy = DevicePatches(workspace: workspace).original(of: view)
+        let copy = BuiltFiles(workspace: workspace).copy(of: view)
         try FileManager.default.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.copyItem(atPath: view, toPath: copy.path)
         return session

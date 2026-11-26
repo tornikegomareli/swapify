@@ -61,9 +61,8 @@ public struct Launcher: Sendable {
                                + "Delete \(workspace.derivedData.path) and build again.")
         }
         let app = try Xcode.builtApp(derivedData: workspace.derivedData, device: device != nil)
-        if device != nil {
-            try DevicePatches(workspace: workspace).prepare(app: app.path, files: Array(session.commands.keys))
-        }
+        try BuiltFiles(workspace: workspace).save(Array(session.commands.keys))
+        if device != nil { try DevicePatches(workspace: workspace).prepare(app: app.path) }
         session.appPath = app.path.path
         session.bundleID = app.bundleID
         try workspace.save(session)

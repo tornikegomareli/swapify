@@ -9,19 +9,12 @@ import Foundation
 struct DevicePatches {
     let workspace: Workspace
 
-    /// After a device build: the symbols the app's images export, and a copy of
-    /// every reloadable file as it was built, for the layout guard.
-    func prepare(app: URL, files: [String]) throws {
+    /// After a device build: the symbols the app's images export. The binder binds
+    /// the patch to them.
+    func prepare(app: URL) throws {
         let exports = try Shell.run(["xcrun", "dyld_info", "-exports"] + Self.images(in: app).map(\.path))
         guard exports.succeeded else { throw SwapifyError("dyld_info failed:\n\(exports.output)") }
         try exports.output.write(to: workspace.exports, atomically: true, encoding: .utf8)
-
-        try? FileManager.default.removeItem(at: workspace.originals)
-        for file in files where FileManager.default.fileExists(atPath: file) {
-            let copy = original(of: file)
-            try FileManager.default.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: URL(fileURLWithPath: file), to: copy)
-        }
     }
 
     enum Outcome {
@@ -83,7 +76,7 @@ struct DevicePatches {
         let edited = IRModule(try String(contentsOfFile: stem + ".ll", encoding: .utf8))
         var warning: String?
         if !source.isNew {
-            if let before = try builtIR(source.file, command: source.command) {
+            if let before = try BuiltFiles(workspace: workspace).ir(of: source.file, command: source.command) {
                 if let change = LayoutGuard.change(from: before, to: edited) {
                     return .layoutChanged(type: change.type, reason: change.reason)
                 }
@@ -101,31 +94,9 @@ struct DevicePatches {
                 keep: Set<String>) throws -> String {
         try PatchBinder.bind(module, exports: exports, keep: keep).ir
             .write(toFile: stem + ".bound.ll", atomically: false, encoding: .utf8)
-        let usr = URL(fileURLWithPath: command[0]).deletingLastPathComponent().deletingLastPathComponent()
-        let target = command.firstIndex(of: "-target").map { command[$0 + 1] } ?? ""
-        let object = try Shell.run([usr.appendingPathComponent("bin/clang").path, "-c", "-target", target, "-O0",
-                                    stem + ".bound.ll", "-o", stem + ".o"])
+        let object = try Shell.run(FrontendCommand.compileIR(command, ir: stem + ".bound.ll", output: stem + ".o"))
         guard object.succeeded else { throw SwapifyError("Compiling the bound patch failed:\n\(object.output)") }
         return stem + ".o"
-    }
-
-    /// The IR of `file` as it was built, compiled from its copy once per build.
-    private func builtIR(_ file: String, command: [String]) throws -> IRModule? {
-        let copy = original(of: file)
-        let ir = copy.path + ".ll"
-        if !FileManager.default.fileExists(atPath: ir) {
-            guard FileManager.default.fileExists(atPath: copy.path),
-                  try Shell.run(FrontendCommand.patchIR(command, primary: file, source: copy.path, output: ir)).succeeded
-            else { return nil }
-        }
-        return IRModule(try String(contentsOfFile: ir, encoding: .utf8))
-    }
-
-    /// The copy of `file` as it was built. It keeps the file name, which private
-    /// symbol names depend on.
-    func original(of file: String) -> URL {
-        let digest = SHA256.hash(data: Data(file.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
-        return workspace.originals.appendingPathComponent(digest).appendingPathComponent(URL(fileURLWithPath: file).lastPathComponent)
     }
 
     /// The Mach-O images in an app bundle: the executable, top-level dylibs (Xcode's
