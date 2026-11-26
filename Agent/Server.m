@@ -17,7 +17,9 @@ double SWPNowMs(void) {
 }
 
 static NSString *json(NSDictionary *object) {
-    NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:NULL];
+    // dataWithJSONObject: raises on an object that is not valid JSON instead of returning nil.
+    NSData *data = [NSJSONSerialization isValidJSONObject:object]
+        ? [NSJSONSerialization dataWithJSONObject:object options:0 error:NULL] : nil;
     return data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]
                 : @"{\"ok\":false,\"error\":\"reply is not JSON\"}";
 }
