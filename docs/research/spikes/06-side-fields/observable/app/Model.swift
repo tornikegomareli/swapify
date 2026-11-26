@@ -1,5 +1,5 @@
 import Observation
-@Observable final class Model {
+@Observable class Model {
     var a = 1
     init() {}
     func step() {}
