@@ -66,6 +66,30 @@ import Testing
         #expect(lines.contains(#"@llvm.used = appending global [2 x ptr] [ptr @"$s1A3BarVHn", ptr @"$s1A3runyyFTX"], section "llvm.metadata""#))
     }
 
+    /// Another module of the patch uses `Bar`'s metadata, which nothing in this module names.
+    @Test func keepsANewTypesDefinitionsThatAnotherModuleDeclares() throws {
+        let patch = Self.patch + #"""
+            @"$s1A3BarVMf" = internal constant <{ ptr, ptr, i64, ptr }> <{ ptr null, ptr @"$sytWV", i64 512, ptr @"$s1A3BarVMn" }>, align 8
+            @"$s1A3BarVN" = hidden alias %swift.type, getelementptr inbounds (<{ ptr, ptr, i64, ptr }>, ptr @"$s1A3BarVMf", i32 0, i32 2)
+
+            """#
+        let other = IRModule(#"""
+            @"$s1A3BarVN" = external global %swift.type, align 8
+            @"$s1A3FooVN" = external global %swift.type, align 8
+            declare swiftcc void @"$s1A3BazyyF"() #0
+
+            """#)
+        #expect(other.declarations == ["$s1A3BarVN", "$s1A3FooVN", "$s1A3BazyyF"])
+
+        let alone = try PatchBinder.bind(patch, exports: Self.exports).ir
+        #expect(!alone.contains(#"@"$s1A3BarVN" ="#))
+        let bound = try PatchBinder.bind(patch, exports: Self.exports, keep: other.declarations).ir
+        #expect(bound.contains(#"@"$s1A3BarVN" = hidden alias"#))
+        #expect(bound.contains(#"@"$s1A3BarVMf" = internal constant"#))
+        // The app's type stays imported.
+        #expect(bound.contains(#"@"$s1A3FooVN" = external global i8, align 8"#))
+    }
+
     @Test func makesSymbolicReferencesToTheAppIndirect() throws {
         let symbolic = try #require(line(defining: "symbolic _____ 1A3FooV"))
         #expect(symbolic.contains(#"<{ i8 2, i32 trunc (i64 sub (i64 ptrtoint (ptr @"got.$s1A3FooVMn" to i64)"#))
