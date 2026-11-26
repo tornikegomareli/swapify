@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 (unreleased)
+
+### Added
+
+- In the simulator, a stored property added to a class the app was built with reloads instead of asking for a rebuild, for final and non-final classes, `@Observable` ones too. Objects the app already made keep their layout: the new property lives beside each object, starts at its initial value, and is released with the object. It moves into the object at the next build. A method added to or removed from a non-final class reloads too. Structs, enums, removed, renamed or retyped properties, `@Published` properties, and every layout change on an iPhone still need a rebuild. The reload says which properties live beside their objects (`sideFields`).
+
 ## 0.1.1 (2026-11-26)
 
 ### Fixed

@@ -7,7 +7,7 @@ struct TaskItem: Identifiable {
     var done = false
 }
 
-@Observable final class TaskModel {
+@Observable class TaskModel {
     var items: [TaskItem] = [
         TaskItem(title: "Write the agent"),
         TaskItem(title: "Patch chain roots"),

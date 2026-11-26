@@ -38,6 +38,10 @@ public struct ReloadReport: Codable, Sendable {
     public var reason: String?
     /// The command that rebuilds and relaunches, if not `swapify run`: `swapify run --device`.
     public var rebuildCommand: String?
+    /// New stored properties of classes the app was built with, as `Class.property`. They
+    /// live beside each object until the next build, because the objects keep the layout
+    /// they were made with (SideFields).
+    public var sideFields: [String]?
 
     public init(status: Status, files: [String]) {
         self.status = status
@@ -63,6 +67,9 @@ public struct ReloadReport: Codable, Sendable {
         switch status {
         case .live:
             var text = "swapify: \(names) is live in the running app (generation \(generation ?? 0), \(timings.total) ms)."
+            if let sideFields {
+                text += " \(sideFields.joined(separator: ", ")) live\(sideFields.count == 1 ? "s" : "") beside existing objects until the next build."
+            }
             if let screenshot { text += " Screenshot: \(screenshot)." }
             if let visibleText { text += " Visible text: " + visibleText.prefix(40).joined(separator: " | ") }
             return text

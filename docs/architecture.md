@@ -116,7 +116,7 @@ New code runs on objects with the old layout, so a patch must not change stored 
 - Structs (17) and enums (18): field count and field offset vector offset, or payload and empty case counts.
 - Every field record: name, `let` or `var`, and mangled type name. Symbolic references in a type name point into different images, so they compare by the referenced descriptor's name. A direct reference (`0x01`) and an indirect one (`0x02`) to the same type are equal: the linker chooses one or the other.
 
-If anything differs, the agent patches nothing and replies `needsRebuild` with the type and the reason. The loaded dylib stays inert, because nothing points at its code.
+If anything differs, the agent patches nothing and replies `needsRebuild` with the type and the reason. The loaded dylib stays inert, because nothing points at its code. In the simulator, a refusal for a class then tries section 12.
 
 ## 7. SwiftUI redraw
 
@@ -188,3 +188,14 @@ Measured with Examples/Showcase on a 14-core Apple silicon Mac: a reload of `Tas
 | 1 | 494 and 510 ms |
 | 3 | 437 and 449 ms |
 | 6 | 445 and 448 ms |
+
+## 12. New stored properties of a class
+
+In the simulator, when the layout guard refuses a patch, the CLI builds it again through IR (`Reloader.reloadWithSideFields`, `SideFields.swift`). The route only runs after a refusal, so ordinary reloads keep the faster object compile. Objects the app made keep their layout, and each new stored property of a class lives beside the object, in memory attached to it as an associated object (Agent/SideFields.m). Every file of the patch is compiled to IR and to SIL, and the file as built (from `.swapify/originals/`) to IR. Then the IR of every file is rewritten:
+
+- **Field accesses.** Code reaches a stored field of a class with one instruction, `getelementptr inbounds %T…C, ptr %object, i32 0, i32 <element>`. The class's struct type goes back to the built layout, superclass fields first. An access to an existing field gets its built element. An access to a new field calls a helper that returns the field's address in side storage. On an object the app made, the first access stores the property's initial value there (`…vpfi`). A designated initializer (`…fc`) stores the first value itself. The storage's size, alignment and destroy function come from the field type's value witnesses, through the mangled type name in the field descriptor.
+- **Vtable calls.** Class metadata puts the field offset vector before the vtable, so a new stored property moves the slot of every method of a non-final class. In IR, a vtable call is a load of the isa, a `getelementptr` with the slot, and a load marked `!invariant.load`, and nothing names the class. The file's SIL does: each `class_method` names the class and the member, and a member is its name and its type, because overloads share a name. The two are matched in order, function by function. A call to an existing member gets the member's slot as built, read from the full metadata (`$s…Mf`) in the built IR. A call to a new member becomes a direct call to the patch's implementation: no class the app was built with can override a member it has never seen. A method added to or removed from a non-final class takes this path even when no stored property changed: the remaining members get their built slots, and code outside the patch keeps calling a removed method's old body.
+
+The agent then loads the patch with `load-side`, which skips the layout guard for those classes. The rewrite refuses, and the edit needs a rebuild, whenever it cannot prove the objects stay valid: a field whose type, `let` or `var`, or order changed; a new field that the struct type does not cover, behind a field of a resilient type such as `Published<Int>`; a new property without an initial value, or one returned indirectly; a new member that a class in the patch overrides; a vtable call whose SIL and IR do not match; a subclass in a file outside the patch; a superclass in another module. Structs keep needing a rebuild: a copy of a struct has no identity to attach storage to.
+
+Measured on Examples/Showcase in the simulator: adding `var taps = 0` to `TaskModel` and showing it took 1587 ms from edit to verified screen, the guard's refusal included. A plain view edit right after it took 480 ms. docs/research/spikes/06-side-fields has the derivation, a macOS harness, and the measurements behind each rule.
