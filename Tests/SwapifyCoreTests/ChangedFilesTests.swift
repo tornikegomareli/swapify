@@ -116,6 +116,22 @@ private struct Project {
         #expect(session.commands[adopted] != nil)
         #expect(BuildReport.notInTargetMessages(notInTarget) == ["Row.swift is not in the target; add it in Xcode."])
     }
+
+    /// An earlier build, maybe for the other platform, compiled a file that is gone now.
+    @Test func aBuildDropsTheCommandsOfDeletedFiles() throws {
+        let project = Project()
+        defer { project.remove() }
+        let a = project.file("App/A.swift"), card = project.file("App/Card.swift")
+        var session = project.session(compiled: [a, card])
+        try FileManager.default.removeItem(atPath: card)
+        _ = session.recordBuild([a: ["swift-frontend", "-primary-file", a]])
+        #expect(Array(session.commands.keys) == [a])
+
+        // Created again, the file borrows a command of this build.
+        _ = project.file("App/Card.swift")
+        #expect(session.recordReload(of: [card], root: project.root) == nil)
+        #expect(session.borrowed == [card: a])
+    }
 }
 
 @Suite struct ExtraInputTests {

@@ -70,10 +70,12 @@ extension Session {
     }
 
     /// After a build: the commands it printed, and an empty changed set. A new file
-    /// that the build compiled has its own command now. Returns the new files that
-    /// the build did not compile: they are not in the target.
+    /// that the build compiled has its own command now. A deleted file loses its
+    /// command, so a file created again with its name borrows a fresh one. Returns the
+    /// new files that the build did not compile: they are not in the target.
     mutating func recordBuild(_ built: [String: [String]]) -> [String] {
         commands.merge(built) { $1 }
+        commands = commands.filter { FileManager.default.fileExists(atPath: $0.key) }
         changed = []
         borrowed = borrowed.filter { commands[$0.key] == nil && FileManager.default.fileExists(atPath: $0.key) }
         return borrowed.keys.sorted()
