@@ -77,9 +77,11 @@ public enum FrontendCommand {
 
     /// Build outputs without a value of their own. `-emit-localized-strings`
     /// (SWIFT_EMIT_LOC_STRINGS) writes next to the dropped `-emit-localized-strings-path`,
-    /// and without that path, to `/`.
+    /// and without that path, to `/`. The coverage flags (code coverage on in the
+    /// scheme) reference `___llvm_profile_runtime`, which the patch dylib cannot link.
     private static func dropsFlag(_ argument: String) -> Bool {
-        ["-frontend-parseable-output", "-emit-localized-strings"].contains(argument)
+        ["-frontend-parseable-output", "-emit-localized-strings",
+         "-profile-generate", "-profile-coverage-mapping"].contains(argument)
     }
 
     private static func dropsValue(_ argument: String) -> Bool {
