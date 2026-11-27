@@ -30,8 +30,10 @@ struct BuiltFiles {
         let copy = copy(of: file)
         let ir = copy.path + ".ll"
         if !FileManager.default.fileExists(atPath: ir) {
-            guard FileManager.default.fileExists(atPath: copy.path),
-                  try Shell.run(FrontendCommand.patchIR(command, primary: file, source: copy.path, output: ir)).succeeded
+            guard FileManager.default.fileExists(atPath: copy.path) else { return nil }
+            let list = URL(fileURLWithPath: copy.path + ".SwiftFileList")
+            let replaced = try FrontendCommand.replacing(file, with: copy.path, in: command, list: list)
+            guard try Shell.run(FrontendCommand.patchIR(replaced, primary: file, source: copy.path, output: ir)).succeeded
             else { return nil }
         }
         return IRModule(try String(contentsOfFile: ir, encoding: .utf8))

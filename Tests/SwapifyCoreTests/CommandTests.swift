@@ -82,6 +82,24 @@ import Testing
         #expect(built.contains("/s/C.swift") && !built.contains("/p/C.swift"))
     }
 
+    @Test func replacesBuiltCopyInFileListForOriginalIR() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("swapify-fl-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let original = dir.appendingPathComponent("sources-1")
+        let rewritten = dir.appendingPathComponent("copy.SwiftFileList")
+        try "/p/A.swift\n/p/C.swift\n".write(to: original, atomically: true, encoding: .utf8)
+
+        let withList = ["/tc/usr/bin/swift-frontend", "-frontend", "-c", "-filelist", original.path, "-primary-file", "/p/C.swift"]
+        let replaced = try FrontendCommand.replacing("/p/C.swift", with: "/orig/C.swift", in: withList, list: rewritten)
+        #expect(replaced[4] == rewritten.path)
+        #expect(try String(contentsOf: rewritten, encoding: .utf8) == "/p/A.swift\n/orig/C.swift\n")
+
+        let ir = FrontendCommand.patchIR(replaced, primary: "/p/C.swift", source: "/orig/C.swift", output: "/tmp/C0.ll")
+        #expect(ir.contains("/orig/C.swift") && !ir.contains("/p/C.swift"))
+        #expect(try FrontendCommand.replacing("/p/C.swift", with: "/orig/C.swift", in: command, list: rewritten) == command)
+    }
+
     @Test func linksDevicePatchesWithTheDeviceLibraries() {
         let device = command.map { $0 == "arm64-apple-ios27.0-simulator" ? "arm64-apple-ios27.0" : $0 }
         let link = FrontendCommand.link(device, objects: ["/tmp/C.o"], output: "/tmp/patch.dylib")
