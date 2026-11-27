@@ -104,6 +104,73 @@ NSDictionary *SWPDescribeUI(void) {
 
 // Activates the element whose label or identifier equals `query`, else the
 // first element whose label contains it.
+// The view under an accessibility element: UIKit describes a table cell with a proxy
+// element, which is not the cell, so the window is hit-tested at the element's center.
+static UIView *viewUnder(id element) {
+    if ([element isKindOfClass:UIView.class]) return element;
+    CGRect frame = [element accessibilityFrame];
+    CGPoint center = CGPointMake(frame.origin.x + frame.size.width / 2, frame.origin.y + frame.size.height / 2);
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows.reverseObjectEnumerator) {
+            if (window.hidden) continue;
+            CGPoint point = [window convertPoint:center fromCoordinateSpace:window.screen.coordinateSpace];
+            UIView *hit = [window hitTest:point withEvent:nil];
+            if (hit) return hit;
+        }
+    }
+    return nil;
+}
+
+// A table or collection view cell does not activate: UIKit selects its row through the
+// table, as a person's tap does.
+static BOOL selectCell(id element) {
+    for (UIView *view = viewUnder(element); view; view = view.superview) {
+        UIView *list = view.superview;
+        while (list && ![list isKindOfClass:UITableView.class] && ![list isKindOfClass:UICollectionView.class])
+            list = list.superview;
+        if ([view isKindOfClass:UITableViewCell.class] && [list isKindOfClass:UITableView.class]) {
+            UITableView *table = (UITableView *)list;
+            NSIndexPath *path = [table indexPathForCell:(UITableViewCell *)view];
+            id<UITableViewDelegate> delegate = table.delegate;
+            if (path && [delegate respondsToSelector:@selector(tableView:willSelectRowAtIndexPath:)])
+                path = [delegate tableView:table willSelectRowAtIndexPath:path];
+            if (!path) return NO;
+            [table selectRowAtIndexPath:path animated:NO scrollPosition:UITableViewScrollPositionNone];
+            if ([delegate respondsToSelector:@selector(tableView:didSelectRowAtIndexPath:)])
+                [delegate tableView:table didSelectRowAtIndexPath:path];
+            return YES;
+        }
+        if ([view isKindOfClass:UICollectionViewCell.class] && [list isKindOfClass:UICollectionView.class]) {
+            UICollectionView *collection = (UICollectionView *)list;
+            NSIndexPath *path = [collection indexPathForCell:(UICollectionViewCell *)view];
+            id<UICollectionViewDelegate> delegate = collection.delegate;
+            if (!path || ([delegate respondsToSelector:@selector(collectionView:shouldSelectItemAtIndexPath:)] &&
+                          ![delegate collectionView:collection shouldSelectItemAtIndexPath:path]))
+                return NO;
+            [collection selectItemAtIndexPath:path animated:NO scrollPosition:UICollectionViewScrollPositionNone];
+            if ([delegate respondsToSelector:@selector(collectionView:didSelectItemAtIndexPath:)])
+                [delegate collectionView:collection didSelectItemAtIndexPath:path];
+            return YES;
+        }
+    }
+    return NO;
+}
+
+// A control that does not activate for accessibility, such as a navigation bar's back
+// button, gets the events a finger's tap would send.
+static BOOL sendTap(id element) {
+    for (UIView *view = viewUnder(element); view; view = view.superview) {
+        if (![view isKindOfClass:UIControl.class]) continue;
+        UIControl *control = (UIControl *)view;
+        if (!control.enabled) return NO;
+        BOOL primary = (control.allControlEvents & UIControlEventPrimaryActionTriggered) != 0;
+        [control sendActionsForControlEvents:primary ? UIControlEventPrimaryActionTriggered : UIControlEventTouchUpInside];
+        return YES;
+    }
+    return NO;
+}
+
 NSDictionary *SWPTap(NSString *query) {
     NSArray *elements = visibleElements();
     id target = nil;
@@ -122,7 +189,7 @@ NSDictionary *SWPTap(NSString *query) {
                 break;
             }
     if (!target) return @{@"ok" : @NO, @"error" : @"no visible element with that label or identifier"};
-    BOOL activated = [target accessibilityActivate];
+    BOOL activated = [target accessibilityActivate] || selectCell(target) || sendTap(target);
     return @{@"ok" : @(activated), @"element" : describe(target)};
 }
 
