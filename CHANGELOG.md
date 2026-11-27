@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3 (unreleased)
+
+### Fixed
+
+- In the simulator, the app crashed after a reload of a file with a private type that has a fixed layout, such as a `ViewModifier` with `Double` fields: code that named the type's metadata directly got the patch's copy, a second type that SwiftUI could not cast to the app's (#7). Such references now read the app's metadata. Simulator patches compile through LLVM IR for this, about 30 ms more per file.
+
 ## 0.1.2 (2026-11-27)
 
 ### Added

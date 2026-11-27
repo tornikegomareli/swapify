@@ -97,7 +97,7 @@ NSDictionary *SWPPatcherLoad(NSString *path, NSSet<NSString *> *sideTypes) {
     size_t addressCount;
     SWPImage patch = SWPImageRead((uint32_t)index, &addresses, &addressCount);
 
-    int accessors = 0, tooSmall = 0, witnessTables = 0;
+    int accessors = 0, tooSmall = 0, witnessTables = 0, sharedMetadata = 0;
 #if TARGET_OS_SIMULATOR
     // device: skipped on a device. A device patch is bound to the app's types by dyld (see
     // docs/research/spikes/04-device-bind) and defines none of them, so there is nothing to jump,
@@ -118,6 +118,19 @@ NSDictionary *SWPPatcherLoad(NSString *path, NSSet<NSString *> *sideTypes) {
         if (!old) continue;
         if (symbolSize(symbol->address, addresses, addressCount) < 16) tooSmall++;
         else if (SWPWriteJump(symbol->address, old->address)) accessors++;
+    }
+    // Code that names a type's static metadata directly reads it from a slot
+    // (MetadataSlots.swift). A type the app has gets the app's metadata: the patch's
+    // copy would be a second type, which SwiftUI cannot cast to the app's (issue #7).
+    // A type new since the build keeps the patch's own.
+    for (size_t i = 0; i < patch.metadataSlots.count; i++) {
+        SWPSymbol *slot = &patch.metadataSlots.symbols[i];
+        char name[1024];
+        snprintf(name, sizeof name, "_%s", slot->name + strlen("_swapify.meta."));
+        SWPSymbol *old = original(offsetof(SWPImage, metadata), name);
+        if (!old) continue;
+        SWPWriteWord(slot->address, old->address);
+        sharedMetadata++;
     }
     // Field offsets of types whose layout depends on other modules are set
     // when metadata initializes. The patch's metadata never initializes.
@@ -166,6 +179,8 @@ NSDictionary *SWPPatcherLoad(NSString *path, NSSet<NSString *> *sideTypes) {
     SWPSymbolTableFree(&patch.descriptors);
     SWPSymbolTableFree(&patch.fieldOffsets);
     SWPSymbolTableFree(&patch.witnessTables);
+    SWPSymbolTableFree(&patch.metadata);
+    SWPSymbolTableFree(&patch.metadataSlots);
     images[imageCount++] = patch;  // keep its roots for the next patch
     generation++;
     double done = SWPNowMs();
@@ -182,7 +197,7 @@ NSDictionary *SWPPatcherLoad(NSString *path, NSSet<NSString *> *sideTypes) {
     });
     return @{
         @"ok" : @YES, @"generation" : @(generation), @"replaced" : @(replaced), @"added" : @(added),
-        @"sharedAccessors" : @(accessors), @"sharedWitnessTables" : @(witnessTables),
+        @"sharedAccessors" : @(accessors), @"sharedWitnessTables" : @(witnessTables), @"sharedMetadata" : @(sharedMetadata),
         @"tooSmall" : @(tooSmall), @"dlopenMs" : @(loaded - start), @"patchMs" : @(done - loaded),
     };
 }

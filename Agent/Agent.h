@@ -26,6 +26,8 @@ typedef struct {
     SWPSymbolTable descriptors;    // $s...Mn  nominal type descriptors
     SWPSymbolTable fieldOffsets;   // $s...Wvd field offsets, set at metadata init
     SWPSymbolTable witnessTables;  // $s...WP  protocol witness tables
+    SWPSymbolTable metadata;       // $s...VN, $s...CN, $s...ON  type metadata
+    SWPSymbolTable metadataSlots;  // swapify.meta.$s...N  a patch's references to static metadata
 } SWPImage;
 
 // Reads the image's symbols, local symbols included. If `addresses` is set, it

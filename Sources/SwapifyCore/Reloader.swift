@@ -44,12 +44,13 @@ public struct Reloader: Sendable {
                                       report: report, snapshot: snapshot, start: start)
         }
 
-        // Compile each file with its build command, as the only primary file, in parallel.
+        // Compile each file with its build command, as the only primary file, in parallel:
+        // to IR, which gets metadata slots (MetadataSlots), then to an object.
         let objects = sources.enumerated().map { index, source in
             directory.appendingPathComponent("\(index)-\(URL(fileURLWithPath: source.file).lastPathComponent).o").path
         }
         let results = try Shell.parallelMap(Array(zip(sources, objects))) { source, object in
-            try Shell.run(FrontendCommand.patch(source.command, primary: source.file, output: object))
+            try compileObject(source, object: object)
         }
         let failures = results.filter { !$0.succeeded }
         guard failures.isEmpty else {
@@ -113,7 +114,7 @@ public struct Reloader: Sendable {
             }
             let objects = try Shell.parallelMap(Array(zip(texts, stems).enumerated())) { index, pair in
                 let (text, stem) = pair
-                try text.write(toFile: stem + ".side.ll", atomically: false, encoding: .utf8)
+                try MetadataSlots.rewrite(text).write(toFile: stem + ".side.ll", atomically: false, encoding: .utf8)
                 return try Shell.run(FrontendCommand.compileIR(sources[index].command, ir: stem + ".side.ll", output: stem + ".o"))
             }
             if let failure = objects.first(where: { !$0.succeeded }) {
@@ -144,6 +145,18 @@ public struct Reloader: Sendable {
             if applied.status != .live { applied.sideFields = nil }  // another type changed too, such as a struct
             return applied
         }
+    }
+
+    /// A simulator patch object: the file's IR with metadata slots, compiled by clang.
+    /// Returns the frontend's result, whose output has the compiler errors.
+    private func compileObject(_ source: PatchSource, object: String) throws -> ProcessResult {
+        let ir = object + ".ll"
+        let frontend = try Shell.run(FrontendCommand.patchIR(source.command, primary: source.file, output: ir))
+        guard frontend.succeeded else { return frontend }
+        try MetadataSlots.rewrite(try String(contentsOfFile: ir, encoding: .utf8))
+            .write(toFile: ir + ".slots.ll", atomically: false, encoding: .utf8)
+        let clang = try Shell.run(FrontendCommand.compileIR(source.command, ir: ir + ".slots.ll", output: object))
+        return clang.succeeded ? frontend : clang
     }
 
     /// The compiles of a patch for `paths`: every file changed since the build, each

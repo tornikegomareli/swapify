@@ -62,7 +62,7 @@ The cost is one runtime call per function call: 7% in a call-heavy micro benchma
 - `-o`, `-emit-*-path`, `-serialize-diagnostics-path`, `-index-*`, and the supplementary output file map are dropped, and a new `-o` is added.
 - The file keeps its path. The mangled name of a `private` declaration contains a discriminator derived from the file name, so the patch's `private` symbols match the app's.
 
-The objects are linked into one dylib with the clang next to `swift-frontend`, as `-dynamiclib -undefined dynamic_lookup`. References to the rest of the app stay undefined and bind to the running process at `dlopen`. The linker signs the dylib ad hoc, which the simulator accepts. Every attempt gets a new directory, because `dlopen` of a path that is already loaded returns the old image.
+Each file compiles to LLVM IR, without debug info (`FrontendCommand.patchIR`), which gets metadata slots (section 5), and the clang next to `swift-frontend` compiles the IR to an object. On a SwiftUI view file that costs about 30 ms more than compiling straight to an object. The objects are linked into one dylib with the same clang, as `-dynamiclib -undefined dynamic_lookup`. References to the rest of the app stay undefined and bind to the running process at `dlopen`. The linker signs the dylib ad hoc, which the simulator accepts. Every attempt gets a new directory, because `dlopen` of a path that is already loaded returns the old image.
 
 Measured on a SwiftUI view file: compile 230 ms, link 210 ms.
 
@@ -99,8 +99,11 @@ So the patch is pointed back at the app:
 | `$s…Ma` type metadata accessor | Overwritten with `ldr x16, #8; br x16; .quad <app accessor>` | New code and mangled-name lookups get the app's metadata |
 | `$s…vau` global and static addressor | Same jump | New code uses the app's storage for globals and `static` properties |
 | `$s…Wl`, `$s…Wa` witness table accessors | Same jump | New code gets the app's conformances |
+| `swapify.meta.$s…N` metadata slot | The app's metadata stored in it | Code that names a type's static metadata directly reads it from this slot (see below) |
 | `$s…Wvd` field offset | Copied from the app | Field offsets of types whose layout depends on resilient types are set when the metadata initializes. The patch's metadata never initializes. |
 | `$s…WP` protocol witness table | Copied word by word from the app | The table names the app's conformance descriptor. Its function entries are the app's witness thunks, which reach the new code through section 4. |
+
+A struct or enum with a fixed layout has static metadata, `$s…Mf`, with `$s…N` at its address point, and code may name it directly instead of calling the accessor. A private `ViewModifier` with `Double` fields, passed to `.modifier(_:)`, is an example. The patch's copy is then a second type, which SwiftUI cannot cast to the app's (issue #7). So before the patch is compiled, every reference to static metadata that is an instruction's operand becomes a load from a slot that holds the patch's own metadata (`MetadataSlots.swift`), and the agent stores the app's metadata in each slot whose type the app has. A type new since the build keeps its own. A reference inside an aggregate constant, such as the accessor's own return value, stays, and the accessor's jump covers it.
 
 A witness table has one word for the conformance descriptor and one per protocol requirement. The agent reads `NumRequirements` at offset 16 of the protocol descriptor that the conformance's relative indirectable pointer names.
 
