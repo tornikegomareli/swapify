@@ -96,6 +96,8 @@ swapify doctor             # checks the Mac, Xcode, the project, the build, the 
 |---|---|
 | Bodies of functions, methods, initializers, computed properties | Live |
 | SwiftUI view structure and modifiers | Live, `@State` kept |
+| UIKit: `viewDidLoad` and other overrides, data source and delegate methods, actions, custom views | Live. The view controllers on screen build their views again in place, and keep their properties and their place in the navigation stack |
+| A new `@objc` method, such as a new action, in the simulator | Live |
 | New functions, new types, `private` helpers | Live |
 | A new Swift file in a folder with app files, or below one | Live |
 | Stored properties of a type created since the last build | Live |
@@ -105,6 +107,7 @@ swapify doctor             # checks the Mac, Xcode, the project, the build, the 
 | A method added to or removed from a non-final class, in the simulator | Live. Code that the patch does not compile keeps calling a removed method's old body |
 | Any other change to the stored properties of a type the app was built with: a struct's or an enum's, one removed, renamed or retyped, a `@Published` one, or any on an iPhone | Rebuild |
 | A method added to or removed from a non-final class on an iPhone | Rebuild |
+| A new `@objc` method or property of a class the app was built with, on an iPhone | Rebuild |
 | A deleted file, resources, `Info.plist`, dependencies | Rebuild |
 
 ## How it works
@@ -115,7 +118,7 @@ swapify uses no private Apple services. It is one compiler flag, one `dlopen`, a
 2. **Compile the changed files.** swapify compiles each Swift file changed since the build, in parallel, with the exact `swift-frontend` command Xcode used for it. A new file borrows the command of a file next to it. The objects are linked into a small dylib.
 3. **Check the layout.** New code runs on objects the app already made, so their layout must not change. swapify compares each type the app was built with against the new code: stored properties and their types, and the vtable of each class. If one differs, nothing is loaded, and the agent is told why.
 4. **Load and repoint.** An agent inside the app `dlopen`s the patch and copies each new chain root into the old one. Direct calls, vtables and protocol witnesses all go through that pointer, so every caller runs the new body. Each type keeps one identity, so existing objects, statics and `@State` stay valid. In the simulator, the patch's type accessors jump to the app's originals. On an iPhone, where a process cannot write code, the patch is built so that dyld binds it to the app's types when it loads.
-5. **Redraw.** SwiftUI does not know that a `body` changed. For each hosting view, swapify invalidates the AttributeGraph and flushes a transaction, as Xcode Previews does, without the phase bump that resets `@State`.
+5. **Redraw.** SwiftUI does not know that a `body` changed. For each hosting view, swapify invalidates the AttributeGraph and flushes a transaction, as Xcode Previews does, without the phase bump that resets `@State`. UIKit calls `@objc` methods through the Objective-C runtime, so swapify also points those methods at the patch's thunks. Then each view controller on screen that the edit touches loads its view again through its own `loadView` and `viewDidLoad`, in the same place.
 6. **Report.** The agent in the app renders the windows at 1x and reads the accessibility tree. The screenshot and the visible text go back to the coding agent.
 
 A warm reload of a SwiftUI view file in the simulator takes about 512 ms: 230 ms to compile, 210 ms to link, 14 ms to load and check, 5 ms to redraw, and 53 ms for the screenshot and text. A reload costs what compiling the changed files costs, so a file that is slow to type-check reloads slowly.
@@ -124,7 +127,7 @@ A warm reload of a SwiftUI view file in the simulator takes about 512 ms: 230 ms
 
 - Apple silicon Macs and Debug builds only.
 - The SwiftUI redraw calls functions by their mangled names. If a future iOS renames them, reloads still apply and views redraw on their next state change. `swapify doctor` reports it.
-- UIKit screens do not redraw by themselves. Observe the `SwapifyDidReload` notification to rebuild one.
+- A UIKit screen keeps what was set up outside its view controller's `loadView`, `viewDidLoad` and `viewWillAppear`, for example in `init` or by the code that presented it. Such a view controller can implement `@objc func injected()` to set it up again after a reload.
 - The app must be in the foreground, because iOS suspends background apps.
 
 ## Remove
@@ -140,8 +143,8 @@ In a project, delete `swapify.json`, `.swapify/`, the `swapify` entry in `.mcp.j
 ```sh
 swift build                          # the CLI; the agent inside the app is built from Agent/
 make test                            # unit tests
-make e2e                             # the whole pipeline against Examples/Showcase in a simulator
-python3 -I scripts/e2e.py --device   # the same on the connected iPhone (Showcase needs a signing team)
+make e2e                             # the whole pipeline against Examples/Showcase (SwiftUI) and Examples/Notes (UIKit) in a simulator
+python3 -I scripts/e2e.py --device   # Showcase on the connected iPhone (it needs a signing team); e2e-uikit.py takes --device too
 scripts/release.sh 0.1.0             # tags and publishes a release; see the script's header
 ```
 

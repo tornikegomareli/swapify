@@ -16,7 +16,9 @@ swapify makes Swift edits live in a running iOS Simulator app. This document des
                                                            ├─ new → old     ($s…Ma $s…vau $s…Wl $s…Wa
                                                            │                 $s…Wvd $s…WP)
                                                            ├─ old → new     ($s…TX chain roots)
+                                                           ├─ @objc methods ($s…To thunks)
      "refresh" ───────────────────────────────────────▶   ├─ AGGraphInvalidateAllValues per view graph
+                                                           ├─ UIKit: rebuild touched view controllers
      "snapshot" / "ui" ───────────────────────────────▶   └─ drawViewHierarchy, accessibility tree
 ```
 
@@ -88,6 +90,8 @@ The new function reads its own root, which still points at itself, so it runs it
 
 A function that only patches define, one of a type that is new since the build, is not forwarded: each patch keeps its own copy (section 11).
 
+`@objc` members have no chain root, so UIKit's calls through `objc_msgSend` need a second path (section 13).
+
 ## 5. New code keeps old types
 
 The patch is a compilation of the whole file, so it defines its own copy of every type, static, and conformance in it. Left alone, the new code would allocate instances of a second `TaskModel` class, read a second copy of every `static let`, and show SwiftUI a second `TaskRow` type. SwiftUI would then rebuild that subtree and drop its `@State`, and `as?` casts between old and new instances would fail.
@@ -136,14 +140,14 @@ The agent repeats this for every `_UIHostingView` in the app's windows, but skip
 
 If a future iOS renames these functions, `ping` reports `"swiftUIRefresh": false`, reloads still apply, and views redraw on their next state change.
 
-The agent also posts `SwapifyDidReload` with the generation in `userInfo`, and `INJECTION_BUNDLE_NOTIFICATION`, which keeps Inject's `@ObserveInjection` working.
+The agent also posts `SwapifyDidReload` with the generation in `userInfo`, and `INJECTION_BUNDLE_NOTIFICATION`, which keeps Inject's `@ObserveInjection` working. UIKit screens refresh by themselves (section 13).
 
 ## 8. Verification
 
 After a reload the CLI asks the agent for two things:
 
 - **Snapshot.** The agent renders the foreground windows with `drawViewHierarchyInRect:afterScreenUpdates:YES` at 1x. This applies pending updates first, so no delay is needed after the refresh. It takes about 46 ms and gives a 402 × 874 PNG, about 480 image tokens for a model.
-- **Visible text.** SwiftUI builds its accessibility tree only while accessibility is on, so the agent calls `_AXSApplicationAccessibilitySetEnabled(1)` once, then walks the accessibility containers of every window. Elements are sorted by frame, because tree order can lag behind the screen. `tap` calls `accessibilityActivate` on the element whose label or identifier matches.
+- **Visible text.** SwiftUI builds its accessibility tree only while accessibility is on, so the agent calls `_AXSApplicationAccessibilitySetEnabled(1)` once, then walks the accessibility containers of every window. Elements are sorted by frame, because tree order can lag behind the screen. `tap` calls `accessibilityActivate` on the element whose label or identifier matches. If the element does not activate, a table or collection view cell under it is selected through its view's delegate, and a control under it gets its tap action.
 
 ## 9. Timings
 
@@ -202,3 +206,20 @@ In the simulator, when the layout guard refuses a patch, the CLI builds it again
 The agent then loads the patch with `load-side`, which skips the layout guard for those classes. The rewrite refuses, and the edit needs a rebuild, whenever it cannot prove the objects stay valid: a field whose type, `let` or `var`, or order changed; a new field that the struct type does not cover, behind a field of a resilient type such as `Published<Int>`; a new property without an initial value, or one returned indirectly; a new member that a class in the patch overrides; a vtable call whose SIL and IR do not match, or a class whose moved slots no call matched; a subclass in a file outside the patch, or a new class in the patch that subclasses a changed one; a key path to a stored property of a class, which holds the field's offset inline; a changed superclass, or one in another module. Structs keep needing a rebuild: a copy of a struct has no identity to attach storage to.
 
 Measured on Examples/Showcase in the simulator: adding `var taps = 0` to `TaskModel` and showing it took 1587 ms from edit to verified screen, the guard's refusal included. A plain view edit right after it took 480 ms. docs/research/spikes/06-side-fields has the derivation, a macOS harness, and the measurements behind each rule.
+
+## 13. UIKit
+
+UIKit calls a view controller's `viewDidLoad`, a data source's `tableView(_:cellForRowAt:)` and a button's action through `objc_msgSend`. Each `@objc` member, written or implied by an override or an Objective-C protocol, has an Objective-C thunk `$s…To`, and the class's method list points at the thunk. `-enable-implicit-dynamic` gives these members no chain root, so section 4 alone leaves UIKit running the old bodies.
+
+**Methods.** The agent keeps every `$s…To` symbol of the app and of each patch. For each class that has a thunk in the patch, it walks the app class's method list and its metaclass's. A method whose implementation is a thunk of the app or of an earlier patch gets the patch's thunk of the same name (`method_setImplementation`). The patch's thunk calls the new body. `dealloc`, `.cxx_destruct` and `.cxx_construct` keep the app's. In the simulator, a method new in the edit, such as a new action, is added from the patch's own copy of the class in `__objc_classlist` (`class_addMethod`). This runs before field offsets are copied, because reading a class's methods realizes it, and realizing a class with an Objective-C superclass sets its field offsets. On a device, `PatchBinder` keeps the thunks although nothing in the patch calls them. A device patch registers no classes, so a new `@objc` member of an app class needs a rebuild there, and `load` refuses it.
+
+**Screens.** A UIKit screen is what `loadView` and `viewDidLoad` built, with the code of that moment. After `refresh`, the agent finds every view controller that the patch touches: its class or a superclass is in the patch, or a view of a patched class is in its view tree. Then, for each one that is not inside another one:
+
+- If it implements `injected()`, as with InjectionIII, it gets that call and nothing else.
+- If it is in a transition, it is rebuilt when the transition completes.
+- If its view is on screen, the view is built again in place. The agent records the view's superview, index, frame, autoresizing mask and the constraints the app made that pin it. It removes the child view controllers whose views are inside, sets `view = nil` and calls `loadViewIfNeeded`, so the view controller's own `loadView`, nib or storyboard, and `viewDidLoad` run with the new code. The new view takes the old one's place and constraints, then `viewWillAppear` and `viewDidAppear` run.
+- If its view is loaded but off screen, deeper in a navigation stack or in another tab, the view is unloaded. UIKit loads it with the new code when it shows it again.
+
+The view controller object stays, so its properties, its place in the navigation stack and the app's data are kept. Navigation, tab, split and page controllers are not rebuilt, because they own their children's views. Views of patched classes then get `setNeedsLayout` and `setNeedsDisplay`, and table and collection views whose data source or delegate is patched get `reloadData`.
+
+A reload of Examples/Notes, a UIKit app built in code, rebuilds the list in 2 to 7 ms. scripts/e2e-uikit.py checks an override, a data source method, a custom view, a pushed screen that stays pushed, a new action, and a compile error.
