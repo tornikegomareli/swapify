@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SwapifyInfo {
-    public static let version = "0.1.3"
+    public static let version = "0.1.4"
 }
 
 /// What `swapify init` writes into a project.
