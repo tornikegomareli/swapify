@@ -82,14 +82,24 @@ try:
     subprocess.run(["swift", "build"], cwd=root, check=True, capture_output=True)
     if not os.path.exists(os.path.join(example, "Showcase.xcodeproj")):
         subprocess.run(["xcodegen", "generate"], cwd=example, check=True, capture_output=True)
+    # A private type with static metadata, built into the app (issue #7): patched code must
+    # use the app's metadata, or SwiftUI sees two types. Its printed name has its context's address.
+    edit(list_view, '            .navigationTitle("Today")\n',
+         '            .navigationTitle("Today")\n'
+         '            .safeAreaInset(edge: .bottom) { Text(String(reflecting: Probe.self)).font(.caption2) }\n')
+    open(list_view, "a").write("\nprivate struct Probe {}\n")
     run = cli("run", *sys.argv[1:])
     check("build, launch and warm-up", run.get("launch", {}).get("warmup", {}).get("status") == "live", run)
+    built_probe = [label for label in labels() if label.endswith(".Probe")]
 
     edit(list_view, '.navigationTitle("Today")', '.navigationTitle("Inbox")')
     result = cli("reload", list_view)
     check("visual edit is live", result["status"] == "live" and "Inbox" in result["visibleText"], result)
     check("warm reload under 2 s", result["status"] == "live" and result["timings"]["total"] < 2000,
           result.get("timings"))
+    patched_probe = [label for label in labels() if label.endswith(".Probe")]
+    check("a private type keeps the app's metadata", built_probe and patched_probe == built_probe,
+          {"built": built_probe, "patched": patched_probe})
 
     edit(list_view, '.navigationTitle("Inbox")', ".navigationTitle(missingName)")
     result = cli("reload", list_view)

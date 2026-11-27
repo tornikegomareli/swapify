@@ -55,8 +55,8 @@ SWPImage SWPImageRead(uint32_t index, uintptr_t **addresses, size_t *addressCoun
     const struct nlist_64 *symbols = (const void *)(base + symtab->symoff);
     const char *strings = (const char *)(base + symtab->stroff);
     size_t capacity = sizeof(SWPSymbol) * (symtab->nsyms + 1);
-    SWPSymbolTable *tables[] = {&image.roots, &image.accessors, &image.descriptors,
-                                &image.fieldOffsets, &image.witnessTables};
+    SWPSymbolTable *tables[] = {&image.roots, &image.accessors, &image.descriptors, &image.fieldOffsets,
+                                &image.witnessTables, &image.metadata, &image.metadataSlots};
     for (size_t t = 0; t < sizeof tables / sizeof *tables; t++) tables[t]->symbols = malloc(capacity);
     if (addresses) *addresses = malloc(sizeof(uintptr_t) * (symtab->nsyms + 1));
     if (addressCount) *addressCount = 0;
@@ -67,6 +67,7 @@ SWPImage SWPImageRead(uint32_t index, uintptr_t **addresses, size_t *addressCoun
         const char *name = strings + symbol->n_un.n_strx;
         uintptr_t address = symbol->n_value + slide;
         if (addresses) (*addresses)[(*addressCount)++] = address;
+        if (strncmp(name, "_swapify.meta.", 14) == 0) append(&image.metadataSlots, name, address);
         if (strncmp(name, "_$s", 3) != 0) continue;
         if (hasSuffix(name, "TX")) append(&image.roots, name, address);
         else if (hasSuffix(name, "Ma") || hasSuffix(name, "vau") || hasSuffix(name, "Wl") ||
@@ -75,6 +76,8 @@ SWPImage SWPImageRead(uint32_t index, uintptr_t **addresses, size_t *addressCoun
         else if (hasSuffix(name, "Mn")) append(&image.descriptors, name, address);
         else if (hasSuffix(name, "Wvd")) append(&image.fieldOffsets, name, address);
         else if (hasSuffix(name, "WP")) append(&image.witnessTables, name, address);
+        else if (hasSuffix(name, "VN") || hasSuffix(name, "CN") || hasSuffix(name, "ON"))
+            append(&image.metadata, name, address);
     }
     for (size_t t = 0; t < sizeof tables / sizeof *tables; t++) sort(tables[t]);
     if (addresses) qsort(*addresses, *addressCount, sizeof(uintptr_t), compareAddresses);
