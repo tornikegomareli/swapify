@@ -53,6 +53,7 @@ NSDictionary *SWPPatcherLoad(NSString *path, NSSet<NSString *> *sideTypes);
 int SWPPatcherGeneration(void);
 
 // SwiftUIRefresh.m: re-renders SwiftUI. Main thread only.
+BOOL SWPSwiftUILoaded(void);
 BOOL SWPSwiftUIRefreshAvailable(void);
 NSDictionary *SWPSwiftUIRefresh(void);
 

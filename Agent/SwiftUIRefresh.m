@@ -1,5 +1,6 @@
 #import "Agent.h"
 #include <dlfcn.h>
+#include <mach-o/dyld.h>
 #include <objc/runtime.h>
 
 // SwiftUI does not know that a body was replaced. This repeats what
@@ -24,6 +25,13 @@ static struct {
     void (*invalidateLazyContainers)(void);  // DebugReplaceableView.invalidateEverything()
     void (*release)(void *);
 } API;
+
+// A UIKit app without SwiftUI has nothing to redraw here.
+BOOL SWPSwiftUILoaded(void) {
+    for (uint32_t i = 0; i < _dyld_image_count(); i++)
+        if (strstr(_dyld_get_image_name(i), "/SwiftUI.framework/SwiftUI")) return YES;
+    return NO;
+}
 
 BOOL SWPSwiftUIRefreshAvailable(void) {
     static dispatch_once_t once;
@@ -50,6 +58,7 @@ static void collectHostingViews(UIView *view, NSMutableArray *hosts) {
 }
 
 NSDictionary *SWPSwiftUIRefresh(void) {
+    if (!SWPSwiftUILoaded()) return @{@"ok" : @YES, @"hosts" : @0, @"ms" : @0};
     if (!SWPSwiftUIRefreshAvailable())
         return @{@"ok" : @NO, @"error" : @"SwiftUI refresh symbols not found in this iOS version"};
     double start = SWPNowMs();
