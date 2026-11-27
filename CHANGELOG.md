@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.4 (unreleased)
+
+### Added
+
+- UIKit screens refresh after a reload, with no code in the app. Each view controller on screen that the edit touches loads its view again in place, through its own `loadView` and `viewDidLoad`. The view controller object stays, so its properties, its place in the navigation stack, and the app's data are kept. A view controller off screen loads its view with the new code when it shows again. Views of edited classes lay out and draw again, and table and collection views whose data source or delegate was edited reload their data. A view controller or view that implements `@objc func injected()` gets that call instead. The `refresh` reply counts what was refreshed (`uikit`).
+- `@objc` methods reload: overrides such as `viewDidLoad`, data source and delegate methods, and actions. Before, UIKit kept calling their old bodies, because it calls them through the Objective-C runtime. In the simulator, a new `@objc` method, such as a new action, reloads too. On an iPhone it needs a rebuild, and the reload says so.
+- `tap` selects a table or collection view cell, and taps controls that do not respond to accessibility activation, such as a navigation bar's back button.
+- Examples/Notes, a UIKit app built in code, and its end-to-end test, `scripts/e2e-uikit.py`. `make e2e` runs it after the SwiftUI one.
+
+### Fixed
+
+- In an app without SwiftUI, `refresh` failed with "SwiftUI refresh symbols not found", and `ping` reported `swiftUIRefresh: false`.
+
 ## 0.1.3 (2026-11-27)
 
 ### Fixed

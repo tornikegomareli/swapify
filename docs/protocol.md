@@ -22,7 +22,7 @@ ping
 {"ok":true,"protocol":1,"generation":3,"bundleID":"dev.hotreload.showcase","swiftUIRefresh":true}
 ```
 
-`generation` counts applied patches since launch. `swiftUIRefresh` is false if this iOS version lacks the SwiftUI symbols that `refresh` uses. `device` is true on a device, and `traced` says whether a debugger is attached (`P_TRACED`):
+`generation` counts applied patches since launch. `swiftUIRefresh` is false if the app uses SwiftUI and this iOS version lacks the SwiftUI symbols that `refresh` uses. An app without SwiftUI reports true. `device` is true on a device, and `traced` says whether a debugger is attached (`P_TRACED`):
 
 ```text
 {"ok":true,"protocol":1,"generation":0,"bundleID":"dev.swapify.habits","swiftUIRefresh":true,"device":true,"traced":false}
@@ -42,21 +42,30 @@ Stores the bytes that follow the line in the app's `tmp/`, under the last path c
 
 ```text
 load /path/to/.swapify/patches/4-1A2B3C4D/patch.dylib
-{"ok":true,"generation":4,"replaced":12,"added":0,"sharedAccessors":7,"sharedWitnessTables":3,"tooSmall":0,"dlopenMs":3.1,"patchMs":0.4}
+{"ok":true,"generation":4,"replaced":12,"added":0,"objcReplaced":6,"objcAdded":0,"sharedAccessors":7,"sharedWitnessTables":3,"sharedMetadata":1,"tooSmall":0,"dlopenMs":3.1,"patchMs":0.4}
 ```
 
 | Field | Meaning |
 |---|---|
 | `replaced` | Chain roots in the app and earlier patches that now forward to this patch |
 | `added` | Chain roots of functions the app does not have: new functions, and functions of types that are new since the build |
+| `objcReplaced` | Objective-C methods of app classes that now run the patch's `@objc` thunk: overrides such as `viewDidLoad`, data source and delegate methods, actions |
+| `objcAdded` | Objective-C methods new in the edit, added to the app's classes. Simulator only |
 | `sharedAccessors` | Patch accessors and addressors that now jump to the app's |
 | `sharedWitnessTables` | Witness tables copied from the app |
+| `sharedMetadata` | Metadata slots filled with the app's metadata (simulator) |
 | `tooSmall` | Accessors shorter than the 16-byte jump; they were left alone |
 
 A layout change rejects the patch:
 
 ```text
 {"ok":false,"needsRebuild":true,"error":"layout changed","type":"$s8Showcase8TaskItemVMn","reason":"stored properties changed"}
+```
+
+On a device, a new `@objc` member of an app class also rejects the patch, because a device patch registers no classes:
+
+```text
+{"ok":false,"needsRebuild":true,"reason":"Notes.ListViewController has a new @objc method or property. On a device that needs a rebuild.","error":"…"}
 ```
 
 ## load-side
@@ -71,10 +80,19 @@ load-side $s8Showcase9TaskModelCMn /path/to/.swapify/patches/5-9F8E7D6C/patch.dy
 
 ```text
 refresh
-{"ok":true,"hosts":6,"ms":4.3}
+{"ok":true,"hosts":6,"ms":4.3,"uikit":{"ok":true,"rebuilt":1,"unloaded":0,"deferred":0,"injected":0,"redrawn":1,"reloadedData":1,"ms":6.6}}
 ```
 
-Invalidates the view graph of every `_UIHostingView`. Runs on the main thread.
+Runs on the main thread. Invalidates the view graph of every `_UIHostingView`, then refreshes UIKit for the classes the last patch touched (Agent/UIKitRefresh.m):
+
+| Field | Meaning |
+|---|---|
+| `rebuilt` | View controllers on screen whose view was loaded again in place |
+| `unloaded` | View controllers off screen whose view was unloaded; UIKit loads it again when it shows it |
+| `deferred` | View controllers in a transition; each is rebuilt when the transition completes |
+| `injected` | View controllers and views that implement `injected()` and got that call instead |
+| `redrawn` | Views of patched classes that got `setNeedsLayout` and `setNeedsDisplay` |
+| `reloadedData` | Table and collection views whose data source or delegate is patched |
 
 ## snapshot
 
@@ -110,4 +128,4 @@ tap Write the agent
 {"ok":true,"element":{"label":"Write the agent","value":"","identifier":"","traits":["button"],"frame":[16,208,370,52]}}
 ```
 
-Activates the element whose label or identifier equals the argument, or else the first whose label contains it.
+Activates the element whose label or identifier equals the argument, or else the first whose label contains it. A table or collection view cell is selected through its view, as a tap selects it. A control that does not activate for accessibility, such as a navigation bar's back button, gets its tap action.
