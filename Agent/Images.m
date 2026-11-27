@@ -56,7 +56,7 @@ SWPImage SWPImageRead(uint32_t index, uintptr_t **addresses, size_t *addressCoun
     const char *strings = (const char *)(base + symtab->stroff);
     size_t capacity = sizeof(SWPSymbol) * (symtab->nsyms + 1);
     SWPSymbolTable *tables[] = {&image.roots, &image.accessors, &image.descriptors, &image.fieldOffsets,
-                                &image.witnessTables, &image.metadata, &image.metadataSlots};
+                                &image.witnessTables, &image.metadata, &image.metadataSlots, &image.objcThunks};
     for (size_t t = 0; t < sizeof tables / sizeof *tables; t++) tables[t]->symbols = malloc(capacity);
     if (addresses) *addresses = malloc(sizeof(uintptr_t) * (symtab->nsyms + 1));
     if (addressCount) *addressCount = 0;
@@ -78,6 +78,7 @@ SWPImage SWPImageRead(uint32_t index, uintptr_t **addresses, size_t *addressCoun
         else if (hasSuffix(name, "WP")) append(&image.witnessTables, name, address);
         else if (hasSuffix(name, "VN") || hasSuffix(name, "CN") || hasSuffix(name, "ON"))
             append(&image.metadata, name, address);
+        else if (hasSuffix(name, "To")) append(&image.objcThunks, name, address);
     }
     for (size_t t = 0; t < sizeof tables / sizeof *tables; t++) sort(tables[t]);
     if (addresses) qsort(*addresses, *addressCount, sizeof(uintptr_t), compareAddresses);
