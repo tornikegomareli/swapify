@@ -28,6 +28,7 @@ test:
 e2e: agent
 	swift build
 	python3 -I scripts/e2e.py
+	python3 -I scripts/e2e-uikit.py
 
 clean:
 	rm -rf .build
