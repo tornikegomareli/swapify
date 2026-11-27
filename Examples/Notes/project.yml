@@ -1,0 +1,17 @@
+name: Notes
+options:
+  bundleIdPrefix: dev.hotreload
+  deploymentTarget:
+    iOS: "27.0"
+targets:
+  Notes:
+    type: application
+    platform: iOS
+    sources: [Notes]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.hotreload.notes
+        SWIFT_VERSION: "6.0"
