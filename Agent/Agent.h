@@ -28,6 +28,7 @@ typedef struct {
     SWPSymbolTable witnessTables;  // $s...WP  protocol witness tables
     SWPSymbolTable metadata;       // $s...VN, $s...CN, $s...ON  type metadata
     SWPSymbolTable metadataSlots;  // swapify.meta.$s...N  a patch's references to static metadata
+    SWPSymbolTable objcThunks;     // $s...To  Objective-C entry points of @objc members
 } SWPImage;
 
 // Reads the image's symbols, local symbols included. If `addresses` is set, it
@@ -56,6 +57,11 @@ int SWPPatcherGeneration(void);
 BOOL SWPSwiftUILoaded(void);
 BOOL SWPSwiftUIRefreshAvailable(void);
 NSDictionary *SWPSwiftUIRefresh(void);
+
+// UIKitRefresh.m: builds again the views of view controllers that the last patch
+// touched. Main thread only.
+void SWPUIKitSetPatchedClasses(NSSet<NSString *> *names);
+NSDictionary *SWPUIKitRefresh(void);
 
 // Inspector.m: accessibility tree, taps and snapshots. Main thread only.
 BOOL SWPEnableAccessibility(void);

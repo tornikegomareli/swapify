@@ -69,7 +69,14 @@ static NSDictionary *handle(NSString *line) {
         NSArray *types = [[rest substringToIndex:space.location] componentsSeparatedByString:@","];
         return SWPPatcherLoad([rest substringFromIndex:space.location + 1], [NSSet setWithArray:types]);
     }
-    if ([line isEqualToString:@"refresh"]) return onMain(^{ return SWPSwiftUIRefresh(); });
+    if ([line isEqualToString:@"refresh"])
+        return onMain(^{
+            NSMutableDictionary *reply = [SWPSwiftUIRefresh() mutableCopy];
+            NSDictionary *uikit = SWPUIKitRefresh();
+            reply[@"uikit"] = uikit;
+            reply[@"ms"] = @([reply[@"ms"] doubleValue] + [uikit[@"ms"] doubleValue]);
+            return reply;
+        });
     // device: with no path the PNG comes back in the reply, because the app cannot write Mac paths.
     if ([line isEqualToString:@"snapshot"]) return onMain(^{ return SWPSnapshot(nil, 1); });
     if ([line hasPrefix:@"snapshot "]) {

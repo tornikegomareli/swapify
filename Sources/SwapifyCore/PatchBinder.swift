@@ -76,7 +76,9 @@ enum PatchBinder {
         var roots = module.entities.compactMap { entity -> String? in
             guard let name = entity.name, !imported.contains(name) else { return nil }
             let local = ["internal", "private", "linkonce_odr", "weak_odr"].contains { entity.text.hasPrefix("define \($0)") }
-            return (entity.kind == .function && !local) || name.hasSuffix("TX") || name.hasSuffix("Tx") ? name : nil
+            // `$s…To` thunks are the Objective-C entry points of @objc members: the agent puts
+            // them into the app's classes, so they stay although nothing in the patch calls them.
+            return (entity.kind == .function && (!local || name.hasSuffix("To"))) || name.hasSuffix("TX") || name.hasSuffix("Tx") ? name : nil
         }
         let declared = module.declarations
         roots += keep.filter { texts[$0] != nil && !declared.contains($0) }

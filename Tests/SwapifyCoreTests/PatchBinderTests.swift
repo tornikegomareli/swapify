@@ -59,6 +59,26 @@ import Testing
         #expect(line(defining: "$s1A3runyyFTX") != nil)
     }
 
+    @Test func keepsObjectiveCThunksThatNothingCalls() throws {
+        let patch = #"""
+            define internal void @"$s1A4ViewC4loadyyFTo"(ptr %0, ptr %1) #0 {
+            entry:
+              ret void
+            }
+
+            define internal void @"$s1A6unusedyyF"() #0 {
+            entry:
+              ret void
+            }
+
+            attributes #0 = { noinline }
+
+            """#
+        let ir = try PatchBinder.bind(patch, exports: []).ir
+        #expect(ir.contains(#"define internal void @"$s1A4ViewC4loadyyFTo"(ptr %0, ptr %1) #0 {"#))
+        #expect(!ir.contains("$s1A6unusedyyF"))
+    }
+
     @Test func keepsTheRecordsOfNewTypesOnly() {
         #expect(line(defining: "$s1A3BarVHn") != nil)
         #expect(line(defining: "$s1A3BarVMn") != nil)
