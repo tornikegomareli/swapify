@@ -58,7 +58,7 @@ static NSDictionary *handle(NSString *line) {
         return @{
             @"ok" : @YES, @"protocol" : @SWP_PROTOCOL_VERSION, @"generation" : @(SWPPatcherGeneration()),
             @"bundleID" : NSBundle.mainBundle.bundleIdentifier ?: @"",
-            @"swiftUIRefresh" : @(SWPSwiftUIRefreshAvailable()),
+            @"swiftUIRefresh" : @((BOOL)(!SWPSwiftUILoaded() || SWPSwiftUIRefreshAvailable())),
             @"device" : @((BOOL)!TARGET_OS_SIMULATOR), @"traced" : @(traced()),  // device: no debugger check
         };
     if ([line hasPrefix:@"load "]) return SWPPatcherLoad([line substringFromIndex:5], nil);
