@@ -46,6 +46,19 @@ public enum FrontendCommand {
         return result
     }
 
+    /// `command` with `file` replaced by `replacement` in its `-filelist`, if one is
+    /// present. Used when compiling the built copy of a file so `swift-frontend` does
+    /// not see both the edited file and its built copy in the same module.
+    public static func replacing(_ file: String, with replacement: String, in command: [String], list: URL) throws -> [String] {
+        guard let index = command.firstIndex(of: "-filelist"), index + 1 < command.count else { return command }
+        let listed = try String(contentsOfFile: command[index + 1], encoding: .utf8)
+            .split(separator: "\n").map { $0 == file ? replacement : String($0) }
+        try listed.map { $0 + "\n" }.joined().write(to: list, atomically: true, encoding: .utf8)
+        var result = command
+        result[index + 1] = list.path
+        return result
+    }
+
     /// The patch command for a device patch: LLVM IR instead of an object, without
     /// debug info, which would name definitions the binder drops. With `source`,
     /// that file is compiled in place of `primary`: the copy of the file as it was
