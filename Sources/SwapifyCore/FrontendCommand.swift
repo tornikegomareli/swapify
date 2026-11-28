@@ -26,7 +26,7 @@ public enum FrontendCommand {
                 index += 1
             } else if dropsValue(argument) {
                 index += 2
-            } else if argument == "-frontend-parseable-output" {
+            } else if Self.dropsFlag.contains(argument) {
                 index += 1
             } else {
                 result.append(argument)
@@ -61,6 +61,12 @@ public enum FrontendCommand {
             return debug ? nil : argument
         }
     }
+
+    /// Flags that only matter to the build: parseable output, a strings file whose path was dropped
+    /// above (it would otherwise be written to /), and coverage, which the patch dylib cannot link.
+    private static let dropsFlag: Set<String> = [
+        "-frontend-parseable-output", "-emit-localized-strings", "-profile-generate", "-profile-coverage-mapping",
+    ]
 
     private static func dropsValue(_ argument: String) -> Bool {
         ["-o", "-supplementary-output-file-map", "-serialize-diagnostics-path", "-index-store-path",
