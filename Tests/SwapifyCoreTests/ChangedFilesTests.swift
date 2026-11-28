@@ -179,7 +179,7 @@ private struct Project {
 
         // The new file is only in the list, so the patch names it as the primary file.
         let patch = FrontendCommand.patch(added, primary: "/r/New.swift", output: "/o/New.o")
-        #expect(patch == ["swift-frontend", "-frontend", "-c", "-filelist", copy.path, "/r/B.swift",
+        #expect(patch == ["swift-frontend", "-frontend", "-c", "-filelist", copy.path,
                           "-primary-file", "/r/New.swift", "-o", "/o/New.o"])
     }
 

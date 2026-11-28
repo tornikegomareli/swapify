@@ -9,12 +9,15 @@ public enum FrontendCommand {
     public static func patch(_ command: [String], primary: String, output: String) -> [String] {
         var result: [String] = []
         var marked = false
+        // Batch mode with a file list: the list already holds every input, the other primary
+        // files included. A plain input next to -filelist is an error, so they are dropped.
+        let listed = command.contains("-filelist")
         var index = 0
         while index < command.count {
             let argument = command[index]
             let value = index + 1 < command.count ? command[index + 1] : ""
             if argument == "-primary-file" {
-                result += value == primary ? [argument, value] : [value]
+                result += value == primary ? [argument, value] : (listed ? [] : [value])
                 marked = marked || value == primary
                 index += 2
             } else if argument == primary, !marked {

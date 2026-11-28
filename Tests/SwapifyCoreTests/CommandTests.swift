@@ -48,6 +48,15 @@ import Testing
         ])
     }
 
+    @Test func fileListKeepsOtherPrimaryFilesOutOfThePlainInputs() {
+        // Xcode batch mode: -filelist holds every input, and the batch's files are also -primary-file.
+        let batch = ["/tc/usr/bin/swift-frontend", "-frontend", "-c", "-filelist", "/o/sources",
+                     "-primary-file", "/p/B.swift", "-primary-file", "/p/C.swift", "-o", "/o/B.o", "-o", "/o/C.o"]
+        let patch = FrontendCommand.patch(batch, primary: "/p/C.swift", output: "/tmp/C.o")
+        #expect(patch == ["/tc/usr/bin/swift-frontend", "-frontend", "-c", "-filelist", "/o/sources",
+                          "-primary-file", "/p/C.swift", "-o", "/tmp/C.o"])
+    }
+
     @Test func devicePatchesCompileToIRWithoutDebugInfo() {
         let command = self.command + ["-g", "-debug-info-format=dwarf", "-dwarf-version=5"]
         let ir = FrontendCommand.patchIR(command, primary: "/p/C.swift", output: "/tmp/C.ll")
